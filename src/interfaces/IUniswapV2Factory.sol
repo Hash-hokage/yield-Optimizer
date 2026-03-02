@@ -14,8 +14,5 @@ interface IUniswapV2Factory {
     /// @param tokenA The first token in the pair.
     /// @param tokenB The second token in the pair.
     /// @return pair The address of the pair contract, or `address(0)` if none exists.
-    function getPair(
-        address tokenA,
-        address tokenB
-    ) external view returns (address pair);
+    function getPair(address tokenA, address tokenB) external view returns (address pair);
 }

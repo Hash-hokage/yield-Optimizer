@@ -1,0 +1,17 @@
+{
+  "name": "somnia-yield-keeper",
+  "version": "1.0.0",
+  "description": "Off-chain Keeper service for the Somnia Yield Optimizer — polls APY data and relays updates on-chain.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "ethers": "^6.13.4",
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

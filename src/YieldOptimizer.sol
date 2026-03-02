@@ -26,6 +26,15 @@ import {
 ///      - RiskGuard state (`owner`, `isPaused`, `maxLossThreshold`, `cumulativeLoss`) is
 ///        intentionally packed to minimise storage slot usage.
 ///      - Reactivity cache stores the latest reserve snapshot used for slippage calculations.
+///
+///      **Somnia Gas Model (Critical):**
+///      Somnia's gas costs differ significantly from Ethereum:
+///        - Cold `SLOAD` costs ~1,000,000 gas (~476× Ethereum).
+///        - `LOG` opcodes cost ~13× Ethereum.
+///      This handler performs multiple cold storage reads and cross-contract calls
+///      (DEX swap + vault deposit), so the reactivity subscription `gasLimit` MUST be
+///      set to at least `3_000_000` with `priorityFeePerGas >= 2 gwei` (2,000,000,000 wei).
+///      See: Somnia Reactivity Precompile at `0x0000000000000000000000000000000000000100`.
 contract YieldOptimizer {
     using SafeERC20 for IERC20;
     /*//////////////////////////////////////////////////////////////
@@ -198,12 +207,17 @@ contract YieldOptimizer {
     ///      9. Reimburse gas via paymaster.
     ///     10. RiskGuard: accumulate any losses; trip if threshold is breached.
     ///
+    ///      **Somnia Gas:** This handler is "complex" (cross-contract calls, loops,
+    ///      multiple storage reads). The reactivity subscription backing this callback
+    ///      must use `gasLimit >= 3_000_000`, `priorityFeePerGas >= 2 gwei`.
+    ///
     /// @param newAPY The updated annual percentage yield in basis points (e.g. 500 = 5.00%).
     /// @param targetFarm The address of the yield farm to rebalance into.
     function onYieldUpdated(uint256 newAPY, address targetFarm) external {
         // --- 1. Access control: only the trusted oracle may call this ---
-        if (msg.sender != trustedOracle)
+        if (msg.sender != trustedOracle) {
             revert YieldOptimizer__UnauthorizedCallback();
+        }
 
         // --- 2. Circuit breaker ---
         if (isPaused) revert YieldOptimizer__Paused();

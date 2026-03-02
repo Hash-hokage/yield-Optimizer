@@ -30,10 +30,7 @@ interface IDEXRouter {
     ///        For a direct swap: `[tokenA, tokenB]`.
     ///        For a multi-hop swap: `[tokenA, intermediateToken, ..., tokenB]`.
     /// @return amounts An array of uint256 values representing the output amount at each hop.
-    function getAmountsOut(
-        uint256 amountIn,
-        address[] calldata path
-    ) external view returns (uint256[] memory amounts);
+    function getAmountsOut(uint256 amountIn, address[] calldata path) external view returns (uint256[] memory amounts);
 
     /*//////////////////////////////////////////////////////////////
                            SWAP FUNCTIONS

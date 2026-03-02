@@ -18,11 +18,7 @@ contract MockERC20 is ERC20 {
     /// @param name_ The human-readable name of the token (e.g., "USD Coin").
     /// @param symbol_ The ticker symbol of the token (e.g., "USDC").
     /// @param decimals_ The number of decimal places (e.g., 6 for USDC, 18 for WETH).
-    constructor(
-        string memory name_,
-        string memory symbol_,
-        uint8 decimals_
-    ) ERC20(name_, symbol_) {
+    constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {
         _decimals = decimals_;
     }
 

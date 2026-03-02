@@ -4,9 +4,7 @@ pragma solidity ^0.8.20;
 
 import {IDEXRouter} from "../interfaces/IDEXRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {
-    SafeERC20
-} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title MockDEX
 /// @author Hash-Hokage
@@ -69,12 +67,7 @@ contract MockDEX is IDEXRouter {
     /// @param tokenB Second token in the pair.
     /// @param reserveA Reserve amount for `tokenA`.
     /// @param reserveB Reserve amount for `tokenB`.
-    function setReserves(
-        address tokenA,
-        address tokenB,
-        uint256 reserveA,
-        uint256 reserveB
-    ) external {
+    function setReserves(address tokenA, address tokenB, uint256 reserveA, uint256 reserveB) external {
         bytes32 pairKey = _pairKey(tokenA, tokenB);
         reserves[pairKey][tokenA] = reserveA;
         reserves[pairKey][tokenB] = reserveB;
@@ -98,10 +91,12 @@ contract MockDEX is IDEXRouter {
     /// @inheritdoc IDEXRouter
     /// @dev Applies the constant-product formula with a 0.3% fee at each hop:
     ///      `amountOut = (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)`
-    function getAmountsOut(
-        uint256 amountIn,
-        address[] calldata path
-    ) external view override returns (uint256[] memory amounts) {
+    function getAmountsOut(uint256 amountIn, address[] calldata path)
+        external
+        view
+        override
+        returns (uint256[] memory amounts)
+    {
         if (path.length < 2) revert MockDEX__InvalidPath();
 
         amounts = new uint256[](path.length);
@@ -179,11 +174,11 @@ contract MockDEX is IDEXRouter {
     /// @param tokenIn  The input token address.
     /// @param tokenOut The output token address.
     /// @return amountOut The computed output amount after fee and slippage.
-    function _getAmountOut(
-        uint256 amountIn,
-        address tokenIn,
-        address tokenOut
-    ) internal view returns (uint256 amountOut) {
+    function _getAmountOut(uint256 amountIn, address tokenIn, address tokenOut)
+        internal
+        view
+        returns (uint256 amountOut)
+    {
         bytes32 pairKey = _pairKey(tokenIn, tokenOut);
         uint256 reserveIn = reserves[pairKey][tokenIn];
         uint256 reserveOut = reserves[pairKey][tokenOut];
@@ -199,13 +194,8 @@ contract MockDEX is IDEXRouter {
 
     /// @dev Derives a deterministic key for a token pair by sorting addresses.
     ///      Ensures `(A, B)` and `(B, A)` map to the same reserves.
-    function _pairKey(
-        address tokenA,
-        address tokenB
-    ) internal pure returns (bytes32) {
-        (address token0, address token1) = tokenA < tokenB
-            ? (tokenA, tokenB)
-            : (tokenB, tokenA);
+    function _pairKey(address tokenA, address tokenB) internal pure returns (bytes32) {
+        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         return keccak256(abi.encodePacked(token0, token1));
     }
 }

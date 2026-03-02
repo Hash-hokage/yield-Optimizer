@@ -14,6 +14,17 @@ pragma solidity ^0.8.20;
 ///      1. **Subscription** — Binding a listener to a specific contract + event pair.
 ///      2. **Callback**     — The handler that the subscribing contract must implement.
 ///
+///      **Relationship to the Official Somnia Reactivity Infrastructure:**
+///      The canonical approach uses the `SomniaEventHandler` base contract
+///      (from the somnia-chain/reactivity-contracts npm package) and the Precompile at
+///      `0x0000000000000000000000000000000000000100`. That precompile invokes the
+///      handler's `onEvent(address,bytes32[],bytes)` method.
+///
+///      This project uses a **custom abstraction** where the `YieldRelayer` emits a
+///      `YieldUpdated` event, Somnia's reactive nodes route it, and the `YieldOptimizer`
+///      exposes a typed `onYieldUpdated(uint256,address)` callback verified against
+///      `trustedOracle` (the `YieldRelayer` address). Both patterns are valid.
+///
 ///      > [!CAUTION]
 ///      > **Security-Critical: `msg.sender` Verification in Callbacks**
 ///      >

@@ -71,50 +71,27 @@ contract YieldOptimizerSecurityTest is Test {
 
         // --- 5. Deploy mock factory and register the USDC-TGT pair ---
         factory = new MockUniswapV2Factory();
-        factory.setPair(
-            address(usdc),
-            address(targetToken),
-            makeAddr("usdc-tgt-pair")
-        );
+        factory.setPair(address(usdc), address(targetToken), makeAddr("usdc-tgt-pair"));
         dex.setFactory(address(factory));
 
         // --- 6. Deploy mock yield farm with the target token as underlying ---
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 7. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(
-            address(usdc),
-            paymaster,
-            trustedOracle,
-            address(dex),
-            MAX_LOSS_THRESHOLD
-        );
+        optimizer = new YieldOptimizer(address(usdc), paymaster, trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
 
         // --- 8. Seed USDC into the optimizer ---
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
 
         // --- 9. Configure DEX reserves ---
-        dex.setReserves(
-            address(usdc),
-            address(targetToken),
-            DEX_RESERVE_USDC,
-            DEX_RESERVE_TARGET
-        );
+        dex.setReserves(address(usdc), address(targetToken), DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
 
         // --- 10. Pre-fund the DEX with target tokens so it can fulfil swaps ---
         targetToken.mint(address(dex), DEX_RESERVE_TARGET);
 
         // --- 11. Set cached reserves on the optimizer ---
-        vm.store(
-            address(optimizer),
-            bytes32(uint256(4)),
-            bytes32(DEX_RESERVE_USDC)
-        );
-        vm.store(
-            address(optimizer),
-            bytes32(uint256(5)),
-            bytes32(DEX_RESERVE_TARGET)
-        );
+        vm.store(address(optimizer), bytes32(uint256(4)), bytes32(DEX_RESERVE_USDC));
+        vm.store(address(optimizer), bytes32(uint256(5)), bytes32(DEX_RESERVE_TARGET));
 
         // --- 12. Fund the optimizer with ETH for paymaster reimbursement ---
         vm.deal(address(optimizer), 10 ether);
@@ -136,9 +113,7 @@ contract YieldOptimizerSecurityTest is Test {
 
         // --- Act + Assert ---
         vm.prank(attacker);
-        vm.expectRevert(
-            YieldOptimizer.YieldOptimizer__UnauthorizedCallback.selector
-        );
+        vm.expectRevert(YieldOptimizer.YieldOptimizer__UnauthorizedCallback.selector);
         optimizer.onYieldUpdated(maliciousAPY, address(farm));
     }
 
@@ -223,16 +198,11 @@ contract YieldOptimizerSecurityTest is Test {
         // --- Assert ---
 
         // 1. isPaused must be true — circuit breaker has tripped
-        assertTrue(
-            optimizer.isPaused(),
-            "isPaused should be true after breaker trips"
-        );
+        assertTrue(optimizer.isPaused(), "isPaused should be true after breaker trips");
 
         // 2. cumulativeLoss must be at or above the threshold
         assertGe(
-            optimizer.cumulativeLoss(),
-            MAX_LOSS_THRESHOLD,
-            "cumulativeLoss should meet or exceed maxLossThreshold"
+            optimizer.cumulativeLoss(), MAX_LOSS_THRESHOLD, "cumulativeLoss should meet or exceed maxLossThreshold"
         );
 
         // 3. Attempting another callback must revert with YieldOptimizer__Paused

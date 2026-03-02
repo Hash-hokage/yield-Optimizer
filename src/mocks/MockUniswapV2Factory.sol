@@ -13,20 +13,13 @@ contract MockUniswapV2Factory is IUniswapV2Factory {
 
     /// @notice Register a pair address for (tokenA, tokenB).
     function setPair(address tokenA, address tokenB, address pair) external {
-        (address t0, address t1) = tokenA < tokenB
-            ? (tokenA, tokenB)
-            : (tokenB, tokenA);
+        (address t0, address t1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         _pairs[keccak256(abi.encodePacked(t0, t1))] = pair;
     }
 
     /// @inheritdoc IUniswapV2Factory
-    function getPair(
-        address tokenA,
-        address tokenB
-    ) external view override returns (address) {
-        (address t0, address t1) = tokenA < tokenB
-            ? (tokenA, tokenB)
-            : (tokenB, tokenA);
+    function getPair(address tokenA, address tokenB) external view override returns (address) {
+        (address t0, address t1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         return _pairs[keccak256(abi.encodePacked(t0, t1))];
     }
 }

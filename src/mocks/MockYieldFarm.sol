@@ -26,24 +26,14 @@ contract MockYieldFarm is IYieldFarm {
         return IERC20(asset).balanceOf(address(this));
     }
 
-    function deposit(
-        uint256 assets,
-        address receiver
-    ) external override returns (uint256) {
+    function deposit(uint256 assets, address receiver) external override returns (uint256) {
         IERC20(asset).transferFrom(msg.sender, address(this), assets);
         shares[receiver] += assets; // 1:1 share minting
         return assets;
     }
 
-    function redeem(
-        uint256 _shares,
-        address receiver,
-        address _owner
-    ) external override returns (uint256) {
-        require(
-            shares[_owner] >= _shares,
-            "MockYieldFarm: insufficient shares"
-        );
+    function redeem(uint256 _shares, address receiver, address _owner) external override returns (uint256) {
+        require(shares[_owner] >= _shares, "MockYieldFarm: insufficient shares");
         shares[_owner] -= _shares;
         IERC20(asset).transfer(receiver, _shares); // 1:1 redemption
         return _shares;
