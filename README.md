@@ -22,9 +22,20 @@
 - [Security Model](#security-model)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
+- [👨‍⚖️ For Judges: Testing Reactivity Live](#-for-judges-testing-reactivity-live)
 - [Testing](#testing)
 - [Network Details](#network-details)
 - [License](#license)
+
+---
+
+## Live Testnet Demo
+
+| Resource | Link |
+|---|---|
+| **Frontend (Vercel)** | [https://your-project.vercel.app](https://your-project.vercel.app) |
+| **YieldRelayer** | `0x...` |
+| **YieldOptimizer** | `0x...` |
 
 ---
 
@@ -338,7 +349,7 @@ The subscription owner's EOA must maintain a minimum balance of **32 STT** (Somn
 
 ## Security Model
 
-The reactive pipeline introduces unique security surface areas:
+The reactive pipeline introduces unique security surface areas. These defenses were hardened through a full internal audit (see patches C-01/C-02, H-01–H-03, M-01–M-04, L-01–L-02).
 
 ### 1. Callback Spoofing Prevention
 
@@ -348,24 +359,55 @@ if (msg.sender != trustedOracle) revert YieldOptimizer__UnauthorizedCallback();
 
 Without this check, an attacker could call `onYieldUpdated(999999, maliciousFarm)` directly, tricking the optimizer into rebalancing into a malicious vault.
 
-### 2. RiskGuard Circuit Breaker
+### 2. Farm Whitelist (`allowedFarms`)
+
+Only farms explicitly whitelisted by the owner via `setFarmAllowed(address, bool)` can be targeted by `onYieldUpdated`. This prevents a compromised Keeper from routing funds into a malicious ERC-4626 vault:
 
 ```solidity
-if (cumulativeLoss >= maxLossThreshold) {
-    isPaused = true;
-    emit RiskGuardTripped(cumulativeLoss);
+if (!allowedFarms[targetFarm]) revert YieldOptimizer__FarmNotWhitelisted();
+```
+
+### 3. RiskGuard Circuit Breaker (Total Portfolio Value)
+
+The RiskGuard now calculates **Total Portfolio Value** (`USDC balance + underlying farm shares via convertToAssets`) rather than raw USDC balance alone. This prevents false positives that previously tripped the circuit breaker during normal rebalances where USDC was legitimately converted to farm shares:
+
+```solidity
+uint256 portfolioBefore = _getPortfolioValue(); // USDC + farm shares value
+// ... rebalance ...
+uint256 portfolioAfter = _getPortfolioValue();
+if (portfolioAfter < portfolioBefore) {
+    cumulativeLoss += portfolioBefore - portfolioAfter;
+    if (cumulativeLoss >= maxLossThreshold) {
+        isPaused = true;
+        emit RiskGuardTripped(cumulativeLoss);
+    }
 }
 ```
 
-If cumulative losses from reactive rebalances exceed the threshold, the circuit breaker halts all future callbacks — preventing cascading losses during market manipulation or oracle failures.
+### 4. Dynamic Slippage Protection
 
-### 3. Slippage Protection
+The `_executeRebalance` function enforces a **1% slippage tolerance** by querying the DEX router's `getAmountsOut` at execution time for a **live on-chain quote**, rather than relying on stale cached reserve snapshots. This eliminates the stale-reserve manipulation vector entirely:
 
-The `_executeRebalance` function enforces a **1% slippage tolerance** on all DEX swaps using cached reserve snapshots, guarding against sandwich attacks between the reactive event and the rebalance execution.
+```solidity
+uint256[] memory expectedAmounts = router.getAmountsOut(swapAmount, path);
+uint256 minAmountOut = (expectedAmounts[expectedAmounts.length - 1] * 99) / 100;
+```
 
-### 4. Relayer Access Control
+### 5. Relayer Access Control
 
 Only the `Ownable` owner of the `YieldRelayer` can call `pushYieldUpdate`, preventing unauthorised APY injection. This owner is the Keeper EOA controlled by the off-chain service.
+
+### 6. Admin Lifelines
+
+| Function | Purpose |
+|---|---|
+| `unpause()` | Resume operations after RiskGuard has tripped |
+| `resetCumulativeLoss()` | Zero the loss counter after root cause is addressed |
+| `emergencyWithdraw(token, amount)` | Rescue stuck ERC-20 tokens |
+| `emergencyWithdrawETH()` | Drain ETH in an emergency |
+| `updateCachedReserves(usdc, target)` | Refresh cached reserves for profitability math |
+
+All admin functions are gated by OpenZeppelin's `Ownable` (replacing the previous custom `owner` + `onlyOwner` pattern).
 
 ---
 
@@ -450,25 +492,33 @@ forge test --match-path test/invariant/*.sol -vvv
 
 ### 4. Deploy (Somnia Testnet)
 
-```bash
-# Deploy YieldRelayer
-forge create src/YieldRelayer.sol:YieldRelayer \
-  --rpc-url https://api.infra.testnet.somnia.network \
-  --private-key $DEPLOYER_PRIVATE_KEY \
-  --constructor-args $KEEPER_ADDRESS
+> **OpSec:** We use Foundry's **encrypted keystore** instead of plaintext `.env` private keys. Your key is stored locally under a password and never touches disk in cleartext.
 
-# Deploy YieldOptimizer
-forge create src/YieldOptimizer.sol:YieldOptimizer \
-  --rpc-url https://api.infra.testnet.somnia.network \
-  --private-key $DEPLOYER_PRIVATE_KEY \
-  --constructor-args $USDC_ADDRESS $PAYMASTER_ADDRESS $RELAYER_ADDRESS $ROUTER_ADDRESS $MAX_LOSS_THRESHOLD
+#### 4.1. Setup Deployer Account
+
+```bash
+cast wallet import deployer --interactive
 ```
 
-### 5. Create Reactivity Subscription
+This prompts you to paste your private key and set a password. The key is encrypted and stored locally in Foundry's keystore.
 
-After deploying both contracts, create the subscription that links them (see [Reactivity Subscription Configuration](#reactivity-subscription-configuration)).
+#### 4.2. Broadcast & Subscribe
 
-### 6. Start the Keeper
+```bash
+forge script script/Deploy.s.sol \
+  --rpc-url https://api.infra.testnet.somnia.network \
+  --broadcast \
+  --account deployer
+```
+
+This **atomic deployment script** performs all of the following in one transaction batch:
+1. Deploys `YieldRelayer` and `YieldOptimizer`
+2. Creates the **32 STT reactivity subscription** on the Somnia Precompile (`0x0100`)
+3. Links the contracts via the subscription's event routing
+
+You will be prompted for your keystore password. All deployed addresses are logged to the console for `.env` and frontend configuration.
+
+### 5. Start the Keeper
 
 ```bash
 cd keeper
@@ -476,12 +526,43 @@ cp .env.example .env  # Configure environment variables
 npm start
 ```
 
-### 7. Start the Frontend
+### 6. Start the Frontend
 
 ```bash
 cd frontend
 npm run dev
 ```
+
+---
+
+## 👨‍⚖️ For Judges: Testing Reactivity Live
+
+The system has two categories of actions:
+
+### User Actions
+
+Visit the **[Vercel Frontend](https://your-project.vercel.app)** and deposit USDC into the Optimizer. The dashboard displays live portfolio value, current farm, APY, and RiskGuard status.
+
+### System Actions (Reactivity)
+
+APY updates are normally pushed by our off-chain Keeper every 60 seconds. However, to test the full reactive pipeline **instantly** without waiting, use this "God Mode" command to force an update:
+
+```bash
+# Force a yield update to trigger the reactive bot
+cast send <YIELD_RELAYER_ADDRESS> \
+  "pushYieldUpdate(uint256,address)" \
+  750 <TARGET_FARM_ADDRESS> \
+  --rpc-url https://api.infra.testnet.somnia.network \
+  --private-key <TEST_KEEPER_KEY>
+```
+
+**What happens next:**
+1. The `YieldRelayer` emits a `YieldUpdated` event
+2. Somnia's reactive nodes detect the event and route it to the `YieldOptimizer`
+3. The optimizer runs `onYieldUpdated` — profitability check → rebalance → RiskGuard
+4. The **Vercel UI automatically updates** within a few seconds (no refresh needed)
+
+> **Tip:** The APY value `750` means 7.50% in basis points. Try different values (e.g., `300` for 3%, `1500` for 15%) to see the profitability gate accept or reject rebalances.
 
 ---
 

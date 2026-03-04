@@ -48,7 +48,11 @@ contract YieldOptimizerUnitTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     /// @dev Re-declare event for `vm.expectEmit`.
-    event OptimizerExecuted(address indexed targetFarm, uint256 profitUSDC, uint256 gasSpent);
+    event OptimizerExecuted(
+        address indexed targetFarm,
+        uint256 profitUSDC,
+        uint256 gasSpent
+    );
 
     /*//////////////////////////////////////////////////////////////
                               SETUP
@@ -73,38 +77,46 @@ contract YieldOptimizerUnitTest is Test {
         // --- 5. Deploy mock factory and register the USDC-TGT pair ---
         factory = new MockUniswapV2Factory();
         // Register a non-zero pair address so the optimizer detects a direct pool
-        factory.setPair(address(usdc), address(targetToken), makeAddr("usdc-tgt-pair"));
+        factory.setPair(
+            address(usdc),
+            address(targetToken),
+            makeAddr("usdc-tgt-pair")
+        );
         dex.setFactory(address(factory));
 
         // --- 6. Deploy mock yield farm with the target token as underlying ---
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 7. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(address(usdc), paymaster, trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
+        optimizer = new YieldOptimizer(
+            address(usdc),
+            paymaster,
+            trustedOracle,
+            address(dex),
+            MAX_LOSS_THRESHOLD
+        );
 
         // --- 8. Seed USDC into the optimizer ---
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
 
         // --- 9. Configure DEX reserves ---
-        dex.setReserves(address(usdc), address(targetToken), DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
+        dex.setReserves(
+            address(usdc),
+            address(targetToken),
+            DEX_RESERVE_USDC,
+            DEX_RESERVE_TARGET
+        );
 
         // --- 10. Pre-fund the DEX with target tokens so it can fulfil swaps ---
         targetToken.mint(address(dex), DEX_RESERVE_TARGET);
 
-        // --- 11. Set cached reserves on the optimizer (required for slippage calc) ---
-        //         We use vm.store to write directly into storage slots for cachedReserveUSDC
-        //         and cachedReserveTarget since there is no public setter.
-        //         Storage layout (after the packed slot 0 and slots 1-3):
-        //           slot 0: owner (20 bytes) + isPaused (1 byte)
-        //           slot 1: maxLossThreshold
-        //           slot 2: cumulativeLoss
-        //           slot 3: currentFarm
-        //           slot 4: cachedReserveUSDC
-        //           slot 5: cachedReserveTarget
-        vm.store(address(optimizer), bytes32(uint256(4)), bytes32(DEX_RESERVE_USDC));
-        vm.store(address(optimizer), bytes32(uint256(5)), bytes32(DEX_RESERVE_TARGET));
+        // --- 11. Set cached reserves on the optimizer (using new admin setter) ---
+        optimizer.updateCachedReserves(DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
 
-        // --- 12. Fund the optimizer with ETH for paymaster reimbursement ---
+        // --- 12. Whitelist the farm (Audit H-03) ---
+        optimizer.setFarmAllowed(address(farm), true);
+
+        // --- 13. Fund the optimizer with ETH for paymaster reimbursement ---
         vm.deal(address(optimizer), 10 ether);
     }
 
@@ -139,11 +151,19 @@ contract YieldOptimizerUnitTest is Test {
 
         // 1. Swap completed: optimizer's USDC balance should have decreased (swapped away)
         uint256 optimizerUsdcAfter = usdc.balanceOf(address(optimizer));
-        assertEq(optimizerUsdcAfter, 0, "Optimizer should have swapped all USDC");
+        assertEq(
+            optimizerUsdcAfter,
+            0,
+            "Optimizer should have swapped all USDC"
+        );
 
         // 2. Farm received the deposit: farm should hold target tokens
         uint256 farmTargetBalance = targetToken.balanceOf(address(farm));
-        assertGt(farmTargetBalance, 0, "Farm should hold target tokens after deposit");
+        assertGt(
+            farmTargetBalance,
+            0,
+            "Farm should hold target tokens after deposit"
+        );
 
         // 3. Optimizer has shares in the farm
         uint256 optimizerShares = farm.balanceOf(address(optimizer));
@@ -151,10 +171,18 @@ contract YieldOptimizerUnitTest is Test {
 
         // 4. Paymaster was reimbursed with ETH
         uint256 paymasterBalanceAfter = paymaster.balance;
-        assertGt(paymasterBalanceAfter, paymasterBalanceBefore, "Paymaster should have received ETH reimbursement");
+        assertGt(
+            paymasterBalanceAfter,
+            paymasterBalanceBefore,
+            "Paymaster should have received ETH reimbursement"
+        );
 
         // 5. currentFarm is set to the target farm
-        assertEq(optimizer.currentFarm(), address(farm), "currentFarm should be updated to target farm");
+        assertEq(
+            optimizer.currentFarm(),
+            address(farm),
+            "currentFarm should be updated to target farm"
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -184,17 +212,29 @@ contract YieldOptimizerUnitTest is Test {
 
         // 1. USDC balance unchanged — no swap was executed
         uint256 optimizerUsdcAfter = usdc.balanceOf(address(optimizer));
-        assertEq(optimizerUsdcAfter, optimizerUsdcBefore, "USDC balance should be unchanged (no swap)");
+        assertEq(
+            optimizerUsdcAfter,
+            optimizerUsdcBefore,
+            "USDC balance should be unchanged (no swap)"
+        );
 
         // 2. No farm shares — nothing was deposited
         uint256 optimizerShares = farm.balanceOf(address(optimizer));
         assertEq(optimizerShares, 0, "Optimizer should hold zero farm shares");
 
         // 3. currentFarm remains unset
-        assertEq(optimizer.currentFarm(), address(0), "currentFarm should remain address(0)");
+        assertEq(
+            optimizer.currentFarm(),
+            address(0),
+            "currentFarm should remain address(0)"
+        );
 
         // 4. Paymaster balance unchanged — no reimbursement occurred
         uint256 paymasterBalanceAfter = paymaster.balance;
-        assertEq(paymasterBalanceAfter, paymasterBalanceBefore, "Paymaster balance should be unchanged");
+        assertEq(
+            paymasterBalanceAfter,
+            paymasterBalanceBefore,
+            "Paymaster balance should be unchanged"
+        );
     }
 }

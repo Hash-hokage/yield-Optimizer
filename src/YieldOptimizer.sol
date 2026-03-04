@@ -10,6 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title YieldOptimizer
 /// @author Hash-Hokage
@@ -35,14 +36,17 @@ import {
 ///      (DEX swap + vault deposit), so the reactivity subscription `gasLimit` MUST be
 ///      set to at least `3_000_000` with `priorityFeePerGas >= 2 gwei` (2,000,000,000 wei).
 ///      See: Somnia Reactivity Precompile at `0x0000000000000000000000000000000000000100`.
-contract YieldOptimizer {
+contract YieldOptimizer is Ownable {
     using SafeERC20 for IERC20;
     /*//////////////////////////////////////////////////////////////
                               ERRORS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Reverted when a restricted function is called by a non-owner address.
-    error YieldOptimizer__NotOwner();
+    /// @dev Reverted when a non-whitelisted farm is passed to `onYieldUpdated`.
+    error YieldOptimizer__FarmNotWhitelisted();
+
+    /// @dev Reverted when the emergency ETH withdrawal fails.
+    error YieldOptimizer__ETHWithdrawFailed();
 
     /// @dev Reverted when the contract is paused by the RiskGuard.
     error YieldOptimizer__Paused();
@@ -52,9 +56,6 @@ contract YieldOptimizer {
 
     /// @dev Reverted when the paymaster reimbursement call fails.
     error YieldOptimizer__ReimbursementFailed();
-
-    /// @dev Reverted when cached reserves are zero and a swap is attempted.
-    error YieldOptimizer__ReservesNotCached();
 
     /*//////////////////////////////////////////////////////////////
                      NETWORK ADDRESSES (IMMUTABLE)
@@ -77,30 +78,30 @@ contract YieldOptimizer {
                     RISKGUARD STATE (STORAGE-PACKED)
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice The owner / admin of the optimizer contract.
-    /// @dev Together with `isPaused` (1 byte), this fits within a single 32-byte storage slot
-    ///      (20 bytes address + 1 byte bool = 21 bytes).
-    address public owner;
-
     /// @notice Whether the optimizer is currently paused by the RiskGuard.
     /// @dev When `true`, all rebalancing and swap operations are blocked.
-    ///      Packed into the same storage slot as `owner`.
     bool public isPaused;
 
     /// @notice The maximum cumulative loss (in USDC) allowed before the RiskGuard
     ///         automatically pauses the contract.
-    /// @dev Occupies its own storage slot (slot 1 of the RiskGuard group).
     uint256 public maxLossThreshold;
 
     /// @notice Running total of cumulative losses incurred during rebalances.
     /// @dev When `cumulativeLoss >= maxLossThreshold`, the RiskGuard trips and sets
     ///      `isPaused = true`, emitting a `RiskGuardTripped` event.
-    ///      Occupies its own storage slot (slot 2 of the RiskGuard group).
     uint256 public cumulativeLoss;
 
     /// @notice The address of the yield farm where funds are currently deployed.
     /// @dev `address(0)` means funds are idle in USDC and not deposited in any farm.
     address public currentFarm;
+
+    /*//////////////////////////////////////////////////////////////
+                         FARM WHITELIST (H-03)
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Maps farm addresses to their whitelisted status.
+    /// @dev Only whitelisted farms can be used as rebalance targets in `onYieldUpdated`.
+    mapping(address => bool) public allowedFarms;
 
     /*//////////////////////////////////////////////////////////////
                          REACTIVITY CACHE
@@ -130,6 +131,15 @@ contract YieldOptimizer {
     uint256 private constant SAFETY_BUFFER_NUMERATOR = 11;
     uint256 private constant SAFETY_BUFFER_DENOMINATOR = 10;
 
+    /// @dev Hardcoded ETH/USDC price for testnet profitability calculations.
+    ///      In production, replace with a Chainlink ETH/USD oracle feed.
+    ///      $3 000 per ETH, expressed in USDC's 6-decimal precision.
+    uint256 private constant ETH_PRICE_USDC = 3000e6;
+
+    /// @notice Maximum ETH that can be sent to the paymaster per single callback.
+    /// @dev Caps the gas-reimbursement to prevent unbounded ETH drain (Audit C-01).
+    uint256 public constant MAX_REIMBURSEMENT = 0.01 ether;
+
     /*//////////////////////////////////////////////////////////////
                               EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -151,12 +161,6 @@ contract YieldOptimizer {
     /*//////////////////////////////////////////////////////////////
                             MODIFIERS
     //////////////////////////////////////////////////////////////*/
-
-    /// @dev Restricts access to the contract owner.
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert YieldOptimizer__NotOwner();
-        _;
-    }
 
     /// @dev Prevents execution when the contract is paused.
     modifier whenNotPaused() {
@@ -180,13 +184,12 @@ contract YieldOptimizer {
         address _trustedOracle,
         address _router,
         uint256 _maxLossThreshold
-    ) {
+    ) Ownable(msg.sender) {
         usdc = _usdc;
         paymaster = _paymaster;
         trustedOracle = _trustedOracle;
         router = IDEXRouter(_router);
 
-        owner = msg.sender;
         maxLossThreshold = _maxLossThreshold;
     }
 
@@ -219,34 +222,40 @@ contract YieldOptimizer {
             revert YieldOptimizer__UnauthorizedCallback();
         }
 
-        // --- 2. Circuit breaker ---
+        // --- 2. Farm whitelist (Audit H-03 fix) ---
+        if (!allowedFarms[targetFarm])
+            revert YieldOptimizer__FarmNotWhitelisted();
+
+        // --- 3. Circuit breaker ---
         if (isPaused) revert YieldOptimizer__Paused();
 
         // --- 3. Gas tracking ---
         uint256 startGas = gasleft();
 
-        // --- 4. Snapshot USDC balance before rebalance ---
-        uint256 balanceBefore = IERC20(usdc).balanceOf(address(this));
+        // --- 4. Snapshot total portfolio value before rebalance (Audit M-04 fix) ---
+        uint256 portfolioBefore = _getPortfolioValue();
 
         // --- 5. Profitability math ---
-        //  ΔY = expected yield = balance × newAPY / BPS_DENOMINATOR
+        //  ΔY = expected yield = portfolioValue × newAPY / BPS_DENOMINATOR
         //  (annualised; in practice a per-epoch scaling would be applied)
-        uint256 deltaY = (balanceBefore * newAPY) / BPS_DENOMINATOR;
+        uint256 deltaY = (portfolioBefore * newAPY) / BPS_DENOMINATOR;
 
         //  S  = slippage estimate using constant-product formula on cached reserves.
         //       S ≈ amountIn² / reserveIn  (first-order Taylor approximation)
         //       If reserves are not yet cached, slippage defaults to 0 (conservative).
         uint256 slippage = 0;
         if (cachedReserveUSDC > 0) {
-            slippage = (balanceBefore * balanceBefore) / cachedReserveUSDC;
+            slippage = (portfolioBefore * portfolioBefore) / cachedReserveUSDC;
         }
 
-        //  G  = estimated gas cost in USDC-equivalent wei
-        //       (simplified: raw wei cost; production would use a gas-price oracle)
-        uint256 estimatedGasCost = FIXED_GAS_OVERHEAD * tx.gasprice;
+        //  G  = estimated gas cost converted to USDC (Audit H-02 fix).
+        //       gasCostWei is converted using a constant ETH/USDC price for testnet.
+        //       Production should use a Chainlink ETH/USD oracle.
+        uint256 gasCostWei = FIXED_GAS_OVERHEAD * tx.gasprice;
+        uint256 gasCostUSDC = (gasCostWei * ETH_PRICE_USDC) / 1e18;
 
         //  Profitability gate: ΔY > (G + S) × 1.1
-        uint256 totalCostWithBuffer = ((estimatedGasCost + slippage) *
+        uint256 totalCostWithBuffer = ((gasCostUSDC + slippage) *
             SAFETY_BUFFER_NUMERATOR) / SAFETY_BUFFER_DENOMINATOR;
 
         if (deltaY <= totalCostWithBuffer) {
@@ -257,18 +266,19 @@ contract YieldOptimizer {
         // --- 6. Execute the rebalance ---
         _executeRebalance(targetFarm);
 
-        // --- 7. Gas reimbursement via paymaster ---
+        // --- 7. Gas reimbursement via paymaster (Audit C-01 fix: capped) ---
         uint256 gasSpent = startGas - gasleft() + FIXED_GAS_OVERHEAD;
         uint256 totalCost = gasSpent * tx.gasprice;
+        if (totalCost > MAX_REIMBURSEMENT) totalCost = MAX_REIMBURSEMENT;
 
         (bool success, ) = paymaster.call{value: totalCost}("");
         if (!success) revert YieldOptimizer__ReimbursementFailed();
 
-        // --- 8. RiskGuard: check for losses ---
-        uint256 balanceAfter = IERC20(usdc).balanceOf(address(this));
+        // --- 8. RiskGuard: check for losses using full portfolio value (Audit M-04 fix) ---
+        uint256 portfolioAfter = _getPortfolioValue();
 
-        if (balanceAfter < balanceBefore) {
-            uint256 loss = balanceBefore - balanceAfter;
+        if (portfolioAfter < portfolioBefore) {
+            uint256 loss = portfolioBefore - portfolioAfter;
             cumulativeLoss += loss;
 
             if (cumulativeLoss >= maxLossThreshold) {
@@ -350,14 +360,16 @@ contract YieldOptimizer {
                 path[2] = targetAsset;
             }
 
-            // --- 3b. Slippage protection: 1% tolerance from cached reserves ---
-            if (cachedReserveUSDC == 0 || cachedReserveTarget == 0) {
-                revert YieldOptimizer__ReservesNotCached();
-            }
-
-            // expectedOutput = swapAmount × cachedReserveTarget / cachedReserveUSDC
-            uint256 expectedOutput = (swapAmount * cachedReserveTarget) /
-                cachedReserveUSDC;
+            // --- 3b. Slippage protection: 1% tolerance from live reserves (Audit H-01 fix) ---
+            //     Query the router for the real-time expected output using on-chain pool
+            //     reserves, eliminating reliance on stale cached values.
+            uint256[] memory expectedAmounts = router.getAmountsOut(
+                swapAmount,
+                path
+            );
+            uint256 expectedOutput = expectedAmounts[
+                expectedAmounts.length - 1
+            ];
             // minAmountOut = expectedOutput × 99 / 100 (1% slippage tolerance)
             uint256 minAmountOut = (expectedOutput * 99) / 100;
 
@@ -370,7 +382,7 @@ contract YieldOptimizer {
                 minAmountOut,
                 path,
                 address(this),
-                block.timestamp // deadline = current block (immediate execution)
+                block.timestamp + 300 // deadline = 5 minutes from now (Audit M-03 fix)
             );
 
             receivedAmount = amounts[amounts.length - 1];
@@ -393,6 +405,94 @@ contract YieldOptimizer {
 
         // --- 6. Emit event ---
         emit OptimizerExecuted(targetFarm, receivedAmount, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     INTERNAL — PORTFOLIO VALUATION
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Returns the total portfolio value: raw USDC balance + underlying
+    ///         USDC value of any shares held in the current farm.
+    /// @dev Uses the ERC-4626 `convertToAssets` standard method to price farm
+    ///      shares in terms of the underlying asset, preventing RiskGuard
+    ///      false-positives when funds are legitimately deployed in a vault.
+    ///      (Audit M-04 fix)
+    function _getPortfolioValue() internal view returns (uint256) {
+        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
+
+        if (currentFarm != address(0)) {
+            uint256 shares = IERC20(currentFarm).balanceOf(address(this));
+            if (shares > 0) {
+                usdcBalance += IYieldFarm(currentFarm).convertToAssets(shares);
+            }
+        }
+
+        return usdcBalance;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     ADMIN — CONFIGURATION (C-02, H-03)
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Adds or removes a farm from the whitelist.
+    /// @dev Only whitelisted farms can be targeted by `onYieldUpdated`. (Audit H-03 fix)
+    /// @param farm The farm address to update.
+    /// @param allowed `true` to whitelist, `false` to revoke.
+    function setFarmAllowed(address farm, bool allowed) external onlyOwner {
+        allowedFarms[farm] = allowed;
+    }
+
+    /// @notice Updates the cached reserve snapshot used for slippage calculations.
+    /// @dev Must be called before the first rebalance, and periodically thereafter to
+    ///      keep the slippage estimate accurate. (Audit C-02 fix)
+    /// @param _reserveUSDC The latest USDC reserve in the primary DEX pool.
+    /// @param _reserveTarget The latest target-token reserve in the primary DEX pool.
+    function updateCachedReserves(
+        uint256 _reserveUSDC,
+        uint256 _reserveTarget
+    ) external onlyOwner {
+        cachedReserveUSDC = _reserveUSDC;
+        cachedReserveTarget = _reserveTarget;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                   ADMIN — CIRCUIT BREAKER RESET (M-01)
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Unpauses the contract after the RiskGuard has tripped.
+    /// @dev Only callable by the owner after investigating the root cause of losses.
+    function unpause() external onlyOwner {
+        isPaused = false;
+    }
+
+    /// @notice Resets the cumulative loss counter to zero.
+    /// @dev Allows the optimizer to resume normal operation after losses have been
+    ///      reviewed and the root cause addressed.
+    function resetCumulativeLoss() external onlyOwner {
+        cumulativeLoss = 0;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                   ADMIN — EMERGENCY WITHDRAWALS (L-01)
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emergency withdrawal of any ERC-20 token held by the contract.
+    /// @dev Enables the owner to rescue stuck tokens or drain the contract
+    ///      in an emergency. Uses SafeERC20 for safe transfer.
+    /// @param token The ERC-20 token to withdraw.
+    /// @param amount The amount to withdraw.
+    function emergencyWithdraw(
+        address token,
+        uint256 amount
+    ) external onlyOwner {
+        IERC20(token).safeTransfer(msg.sender, amount);
+    }
+
+    /// @notice Emergency withdrawal of all ETH held by the contract.
+    /// @dev Sends the entire ETH balance to the owner via low-level call.
+    function emergencyWithdrawETH() external onlyOwner {
+        (bool success, ) = msg.sender.call{value: address(this).balance}("");
+        if (!success) revert YieldOptimizer__ETHWithdrawFailed();
     }
 
     /*//////////////////////////////////////////////////////////////
