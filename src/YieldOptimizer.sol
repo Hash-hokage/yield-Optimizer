@@ -7,9 +7,7 @@ import {IYieldFarm} from "./interfaces/IYieldFarm.sol";
 import {ISomniaReactivity} from "./interfaces/ISomniaReactivity.sol";
 import {IUniswapV2Factory} from "./interfaces/IUniswapV2Factory.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {
-    SafeERC20
-} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title YieldOptimizer
@@ -24,7 +22,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///
 ///      **Architecture Notes:**
 ///      - Immutable addresses are set once at deployment and cannot be changed.
-///      - RiskGuard state (`owner`, `isPaused`, `maxLossThreshold`, `cumulativeLoss`) is
+///      - RiskGuard state (`isPaused`, `maxLossThreshold`, `cumulativeLoss`) is
 ///        intentionally packed to minimise storage slot usage.
 ///      - Reactivity cache stores the latest reserve snapshot used for slippage calculations.
 ///
@@ -41,9 +39,6 @@ contract YieldOptimizer is Ownable {
     /*//////////////////////////////////////////////////////////////
                               ERRORS
     //////////////////////////////////////////////////////////////*/
-
-    /// @dev Reverted when a non-whitelisted farm is passed to `onYieldUpdated`.
-    error YieldOptimizer__FarmNotWhitelisted();
 
     /// @dev Reverted when the emergency ETH withdrawal fails.
     error YieldOptimizer__ETHWithdrawFailed();
@@ -148,11 +143,7 @@ contract YieldOptimizer is Ownable {
     /// @param targetFarm The address of the yield farm that received the rebalanced funds.
     /// @param profitUSDC The net profit (in USDC) realised from the rebalance, after gas costs.
     /// @param gasSpent The total gas consumed by the rebalance operation.
-    event OptimizerExecuted(
-        address indexed targetFarm,
-        uint256 profitUSDC,
-        uint256 gasSpent
-    );
+    event OptimizerExecuted(address indexed targetFarm, uint256 profitUSDC, uint256 gasSpent);
 
     /// @notice Emitted when the RiskGuard trips due to cumulative losses exceeding the threshold.
     /// @param totalLoss The cumulative loss value that triggered the guard.
@@ -178,13 +169,9 @@ contract YieldOptimizer is Ownable {
     /// @param _trustedOracle The address of the oracle whose `YieldUpdated` events are trusted.
     /// @param _router The Uniswap V2-style DEX router for executing swaps.
     /// @param _maxLossThreshold The maximum cumulative loss (in USDC) before RiskGuard pauses operations.
-    constructor(
-        address _usdc,
-        address _paymaster,
-        address _trustedOracle,
-        address _router,
-        uint256 _maxLossThreshold
-    ) Ownable(msg.sender) {
+    constructor(address _usdc, address _paymaster, address _trustedOracle, address _router, uint256 _maxLossThreshold)
+        Ownable(msg.sender)
+    {
         usdc = _usdc;
         paymaster = _paymaster;
         trustedOracle = _trustedOracle;
@@ -223,8 +210,7 @@ contract YieldOptimizer is Ownable {
         }
 
         // --- 2. Farm whitelist (Audit H-03 fix) ---
-        if (!allowedFarms[targetFarm])
-            revert YieldOptimizer__FarmNotWhitelisted();
+        require(allowedFarms[targetFarm], "Farm not whitelisted");
 
         // --- 3. Circuit breaker ---
         if (isPaused) revert YieldOptimizer__Paused();
@@ -249,14 +235,13 @@ contract YieldOptimizer is Ownable {
         }
 
         //  G  = estimated gas cost converted to USDC (Audit H-02 fix).
-        //       gasCostWei is converted using a constant ETH/USDC price for testnet.
+        //       estimatedGasCost is converted using a constant ETH/USDC price for testnet.
         //       Production should use a Chainlink ETH/USD oracle.
-        uint256 gasCostWei = FIXED_GAS_OVERHEAD * tx.gasprice;
-        uint256 gasCostUSDC = (gasCostWei * ETH_PRICE_USDC) / 1e18;
+        uint256 estimatedGasCost = FIXED_GAS_OVERHEAD * tx.gasprice;
+        uint256 gasCostUSDC = (estimatedGasCost * ETH_PRICE_USDC) / 1e18;
 
         //  Profitability gate: ΔY > (G + S) × 1.1
-        uint256 totalCostWithBuffer = ((gasCostUSDC + slippage) *
-            SAFETY_BUFFER_NUMERATOR) / SAFETY_BUFFER_DENOMINATOR;
+        uint256 totalCostWithBuffer = ((gasCostUSDC + slippage) * SAFETY_BUFFER_NUMERATOR) / SAFETY_BUFFER_DENOMINATOR;
 
         if (deltaY <= totalCostWithBuffer) {
             // Not profitable — return gracefully without reverting.
@@ -271,7 +256,7 @@ contract YieldOptimizer is Ownable {
         uint256 totalCost = gasSpent * tx.gasprice;
         if (totalCost > MAX_REIMBURSEMENT) totalCost = MAX_REIMBURSEMENT;
 
-        (bool success, ) = paymaster.call{value: totalCost}("");
+        (bool success,) = paymaster.call{value: totalCost}("");
         if (!success) revert YieldOptimizer__ReimbursementFailed();
 
         // --- 8. RiskGuard: check for losses using full portfolio value (Audit M-04 fix) ---
@@ -318,11 +303,7 @@ contract YieldOptimizer is Ownable {
             currentAsset = IYieldFarm(currentFarm).asset();
             uint256 shares = IERC20(currentFarm).balanceOf(address(this));
             if (shares > 0) {
-                IYieldFarm(currentFarm).redeem(
-                    shares,
-                    address(this),
-                    address(this)
-                );
+                IYieldFarm(currentFarm).redeem(shares, address(this), address(this));
             }
             swapAmount = IERC20(currentAsset).balanceOf(address(this));
         } else {
@@ -342,10 +323,7 @@ contract YieldOptimizer is Ownable {
             address factoryAddr = router.factory();
             address[] memory path;
 
-            address directPair = IUniswapV2Factory(factoryAddr).getPair(
-                currentAsset,
-                targetAsset
-            );
+            address directPair = IUniswapV2Factory(factoryAddr).getPair(currentAsset, targetAsset);
 
             if (directPair != address(0)) {
                 // Direct pool exists → single-hop path
@@ -363,13 +341,8 @@ contract YieldOptimizer is Ownable {
             // --- 3b. Slippage protection: 1% tolerance from live reserves (Audit H-01 fix) ---
             //     Query the router for the real-time expected output using on-chain pool
             //     reserves, eliminating reliance on stale cached values.
-            uint256[] memory expectedAmounts = router.getAmountsOut(
-                swapAmount,
-                path
-            );
-            uint256 expectedOutput = expectedAmounts[
-                expectedAmounts.length - 1
-            ];
+            uint256[] memory expectedAmounts = router.getAmountsOut(swapAmount, path);
+            uint256 expectedOutput = expectedAmounts[expectedAmounts.length - 1];
             // minAmountOut = expectedOutput × 99 / 100 (1% slippage tolerance)
             uint256 minAmountOut = (expectedOutput * 99) / 100;
 
@@ -423,7 +396,7 @@ contract YieldOptimizer is Ownable {
         if (currentFarm != address(0)) {
             uint256 shares = IERC20(currentFarm).balanceOf(address(this));
             if (shares > 0) {
-                usdcBalance += IYieldFarm(currentFarm).convertToAssets(shares);
+                usdcBalance += (shares * IYieldFarm(currentFarm).totalAssets()) / IERC20(currentFarm).totalSupply();
             }
         }
 
@@ -447,10 +420,7 @@ contract YieldOptimizer is Ownable {
     ///      keep the slippage estimate accurate. (Audit C-02 fix)
     /// @param _reserveUSDC The latest USDC reserve in the primary DEX pool.
     /// @param _reserveTarget The latest target-token reserve in the primary DEX pool.
-    function updateCachedReserves(
-        uint256 _reserveUSDC,
-        uint256 _reserveTarget
-    ) external onlyOwner {
+    function updateCachedReserves(uint256 _reserveUSDC, uint256 _reserveTarget) external onlyOwner {
         cachedReserveUSDC = _reserveUSDC;
         cachedReserveTarget = _reserveTarget;
     }
@@ -481,17 +451,14 @@ contract YieldOptimizer is Ownable {
     ///      in an emergency. Uses SafeERC20 for safe transfer.
     /// @param token The ERC-20 token to withdraw.
     /// @param amount The amount to withdraw.
-    function emergencyWithdraw(
-        address token,
-        uint256 amount
-    ) external onlyOwner {
+    function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
         IERC20(token).safeTransfer(msg.sender, amount);
     }
 
     /// @notice Emergency withdrawal of all ETH held by the contract.
     /// @dev Sends the entire ETH balance to the owner via low-level call.
     function emergencyWithdrawETH() external onlyOwner {
-        (bool success, ) = msg.sender.call{value: address(this).balance}("");
+        (bool success,) = msg.sender.call{value: address(this).balance}("");
         if (!success) revert YieldOptimizer__ETHWithdrawFailed();
     }
 

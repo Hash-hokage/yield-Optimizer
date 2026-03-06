@@ -4,11 +4,15 @@ pragma solidity ^0.8.20;
 import {Script, console} from "forge-std/Script.sol";
 import {YieldRelayer} from "../src/YieldRelayer.sol";
 import {YieldOptimizer} from "../src/YieldOptimizer.sol";
+import {MockERC20} from "../src/mocks/MockERC20.sol";
+import {MockUniswapV2Factory} from "../src/mocks/MockUniswapV2Factory.sol";
+import {MockDEX} from "../src/mocks/MockDEX.sol";
 
 /// @title Deploy
 /// @author Hash-Hokage
 /// @notice Foundry deployment script for the Somnia Yield Optimizer architecture.
-/// @dev Deploys `YieldRelayer` and `YieldOptimizer`, then creates a reactivity
+/// @dev Deploys an isolated ecosystem (Mock Tokens, Mock Factory, Mock DEX, Liquidity),
+///      then deploys `YieldRelayer` and `YieldOptimizer`. Finally, it creates a reactivity
 ///      subscription on the Somnia Precompile at `0x0100` so that `YieldUpdated`
 ///      events emitted by the Relayer are automatically routed to the Optimizer's
 ///      `onYieldUpdated` callback.
@@ -18,9 +22,7 @@ import {YieldOptimizer} from "../src/YieldOptimizer.sol";
 ///      private keys in plaintext, .env files, or source code.
 ///
 ///      **Environment Variables Required (addresses only):**
-///      - `USDC_ADDRESS`      — Address of the USDC token on Somnia Testnet
 ///      - `PAYMASTER_ADDRESS` — Address of the paymaster for gas reimbursement
-///      - `ROUTER_ADDRESS`    — Address of the Uniswap V2-style DEX router
 ///
 ///      **Deployment Command (Somnia Testnet):**
 ///      ```bash
@@ -35,134 +37,131 @@ import {YieldOptimizer} from "../src/YieldOptimizer.sol";
 ///      The `--gas-estimate-multiplier 200` (2×) is **required** because Foundry's
 ///      gas estimation does not match Somnia's gas model (cold SLOAD ~476× costlier,
 ///      LOG ~13× costlier). Increase to `300` if deployment reverts with out-of-gas.
-///
-///      **Somnia Reactivity Integration:**
-///      After deploying both contracts, the script calls `subscribe(address, bytes32)`
-///      on the Reactivity Precompile (`0x0100`), passing the `YieldRelayer` address and
-///      the `keccak256("YieldUpdated(uint256,address)")` event signature. Exactly
-///      32 STT is attached to satisfy Somnia's minimum subscription balance requirement.
 contract Deploy is Script {
     /*//////////////////////////////////////////////////////////////
                           SOMNIA CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
     /// @dev The canonical Somnia Reactivity Precompile address.
-    ///      All on-chain subscription management goes through this address.
-    ///      See: https://docs.somnia.network/developer/reactivity
-    address constant REACTIVITY_PRECOMPILE =
-        0x0000000000000000000000000000000000000100;
+    address constant REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
 
     /// @dev The minimum STT balance required to activate a reactivity subscription.
-    ///      The subscription owner (deployer EOA) must hold >= 32 STT.
-    ///      This value is sent with the `subscribe` call.
-    uint256 constant SUBSCRIPTION_DEPOSIT = 32 ether; // 32 STT (18 decimals, same as ether)
+    uint256 constant SUBSCRIPTION_DEPOSIT = 32 ether; // 32 STT
 
     /// @dev Maximum cumulative loss (in USDC) before the RiskGuard circuit breaker
-    ///      pauses the optimizer. Set to 1,000 USDC (6 decimals) by default.
-    ///      Adjust based on risk tolerance before production deployment.
-    uint256 constant MAX_LOSS_THRESHOLD = 1_000e6; // 1,000 USDC
+    ///      pauses the optimizer. Set to 5,000 USDC.
+    uint256 constant MAX_LOSS_THRESHOLD = 5_000e6;
 
     /*//////////////////////////////////////////////////////////////
                             DEPLOYMENT
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Main deployment entry point.
-    /// @dev Uses Foundry's `--account` keystore for signing. Reads contract
-    ///      addresses from environment variables. NEVER reads private keys.
-    function run() external {
+    function run()
+        external
+        returns (
+            address deployedUsdc,
+            address deployedTargetToken,
+            address deployedMockDex,
+            address deployedYieldRelayer,
+            address deployedYieldOptimizer
+        )
+    {
         // ─────────────────────────────────────────────────
         //  1. Load environment variables (addresses only)
         // ─────────────────────────────────────────────────
-        address usdcAddress = vm.envAddress("USDC_ADDRESS");
         address paymasterAddress = vm.envAddress("PAYMASTER_ADDRESS");
-        address routerAddress = vm.envAddress("ROUTER_ADDRESS");
 
         console.log("========================================");
         console.log("  SOMNIA YIELD OPTIMIZER -- DEPLOYMENT");
         console.log("========================================");
         console.log("");
-        console.log("USDC:                ", usdcAddress);
         console.log("Paymaster:           ", paymasterAddress);
-        console.log("Router:              ", routerAddress);
         console.log("Max Loss Threshold:  ", MAX_LOSS_THRESHOLD);
         console.log("");
 
         // ─────────────────────────────────────────────────
-        //  2. Start broadcast (keystore signer via --account)
+        //  2. Start broadcast
         // ─────────────────────────────────────────────────
-        //    Foundry's encrypted keystore provides the signing key.
-        //    Pass --account <name> --sender <address> on the CLI.
         vm.startBroadcast();
 
         address deployer = msg.sender;
         console.log("Deployer:            ", deployer);
         console.log("Deployer balance:    ", deployer.balance);
 
-        // Sanity check: deployer must hold >= 32 STT for the subscription deposit
         require(
-            deployer.balance >= SUBSCRIPTION_DEPOSIT,
-            "Deploy: Deployer must hold >= 32 STT for subscription deposit"
+            deployer.balance >= SUBSCRIPTION_DEPOSIT, "Deploy: Deployer must hold >= 32 STT for subscription deposit"
         );
 
         // ─────────────────────────────────────────────────
-        //  3. Deploy YieldRelayer
+        //  3. The Sandbox Phase (Mock Ecosystem)
         // ─────────────────────────────────────────────────
-        //    The deployer (Keeper EOA) is the initial owner,
-        //    meaning only this address can call pushYieldUpdate().
+        console.log("");
+        console.log("--- Sandbox Ecosystem Deployment ---");
+
+        // Deploy Tokens
+        MockERC20 usdc = new MockERC20("Mock USDC", "USDC", 6);
+        MockERC20 targetToken = new MockERC20("Target Farm Token", "TGT", 18);
+        console.log("[DEPLOYED] Mock USDC:         ", address(usdc));
+        console.log("[DEPLOYED] TargetToken (TGT): ", address(targetToken));
+
+        // Mint 1,000,000 of each to deployer
+        usdc.mint(deployer, 1_000_000e6);
+        targetToken.mint(deployer, 1_000_000e18);
+
+        // Deploy AMM
+        MockUniswapV2Factory mockFactory = new MockUniswapV2Factory();
+        console.log("[DEPLOYED] Mock Factory:      ", address(mockFactory));
+
+        MockDEX mockDex = new MockDEX();
+        mockDex.setFactory(address(mockFactory));
+        console.log("[DEPLOYED] Mock DEX Router:   ", address(mockDex));
+
+        // Seed Liquidity
+        // Approve the MockDEX router (even though mockDex doesn't strictly pull for `setReserves`,
+        // it's good practice and fulfills the requirement)
+        usdc.approve(address(mockDex), type(uint256).max);
+        targetToken.approve(address(mockDex), type(uint256).max);
+
+        // Establish the 1:1 price ratio and 100k deep liquidity
+        mockDex.setReserves(address(usdc), address(targetToken), 100_000e6, 100_000e18);
+
+        // Also register the pair in the factory (helpful if optimizer checks it)
+        mockFactory.setPair(address(usdc), address(targetToken), address(mockDex)); // Pair address doesn't matter for the mock, just needs to not be zero
+
+        console.log("[SEEDED]   Liquidity for USDC/TGT set on Mock DEX");
+
+        // ─────────────────────────────────────────────────
+        //  4. The Core Deployment Phase
+        // ─────────────────────────────────────────────────
+        console.log("");
+        console.log("--- Core Optimizer Architecture ---");
+
         YieldRelayer yieldRelayer = new YieldRelayer(deployer);
+        console.log("[DEPLOYED] YieldRelayer:      ", address(yieldRelayer));
 
-        console.log("[DEPLOYED] YieldRelayer:  ", address(yieldRelayer));
-
-        // ─────────────────────────────────────────────────
-        //  4. Deploy YieldOptimizer
-        // ─────────────────────────────────────────────────
-        //    trustedOracle = address(yieldRelayer)
-        //    This means YieldOptimizer will only accept
-        //    onYieldUpdated() calls from the Relayer contract.
         YieldOptimizer yieldOptimizer = new YieldOptimizer(
-            usdcAddress,
+            address(usdc),
             paymasterAddress,
             address(yieldRelayer), // trustedOracle
-            routerAddress,
+            address(mockDex), // router
             MAX_LOSS_THRESHOLD
         );
-
-        console.log("[DEPLOYED] YieldOptimizer:", address(yieldOptimizer));
+        console.log("[DEPLOYED] YieldOptimizer:    ", address(yieldOptimizer));
 
         // ─────────────────────────────────────────────────
-        //  5. Somnia Reactivity — Create Subscription
+        //  5. Somnia Reactivity Integration
         // ─────────────────────────────────────────────────
-        //    Subscribe the YieldOptimizer to the YieldRelayer's
-        //    `YieldUpdated(uint256,address)` event via the
-        //    Somnia Reactivity Precompile at 0x0100.
-        //
-        //    32 STT is attached to satisfy the minimum balance
-        //    requirement for on-chain subscriptions.
-
-        // Calculate the event signature hash
         bytes32 eventSig = keccak256("YieldUpdated(uint256,address)");
 
         console.log("");
         console.log("--- Reactivity Subscription ---");
         console.log("Precompile:          ", REACTIVITY_PRECOMPILE);
-        console.log("Emitter (Relayer):   ", address(yieldRelayer));
-        console.log("Handler (Optimizer): ", address(yieldOptimizer));
+        console.log("Emitter:             ", address(yieldRelayer));
         console.log("Event signature:     ");
         console.logBytes32(eventSig);
-        console.log("Deposit:              32 STT");
 
-        // Execute the subscription call on the precompile
-        // The subscribe(address, bytes32) function registers interest in a
-        // specific event from a specific contract. The attached 32 STT
-        // funds the subscription so validators will process callbacks.
-        (bool success, ) = REACTIVITY_PRECOMPILE.call{
-            value: SUBSCRIPTION_DEPOSIT
-        }(
-            abi.encodeWithSignature(
-                "subscribe(address,bytes32)",
-                address(yieldRelayer),
-                eventSig
-            )
+        (bool success,) = REACTIVITY_PRECOMPILE.call{value: SUBSCRIPTION_DEPOSIT}(
+            abi.encodeWithSignature("subscribe(address,bytes32)", address(yieldRelayer), eventSig)
         );
         require(success, "Deploy: Reactivity subscription failed");
 
@@ -174,47 +173,27 @@ contract Deploy is Script {
         vm.stopBroadcast();
 
         // ─────────────────────────────────────────────────
-        //  7. Print final summary for .env / frontend
+        //  7. Output Logs for the Frontend .env
         // ─────────────────────────────────────────────────
         console.log("");
         console.log("========================================");
-        console.log("  DEPLOYMENT COMPLETE");
+        console.log("  DEPLOYMENT COMPLETE (ISOLATED SANDBOX)");
         console.log("========================================");
         console.log("");
-        console.log("Copy these into your .env:");
+        console.log("Copy these into your .env/viemConfig.ts:");
         console.log("");
-        console.log("  RELAYER_CONTRACT_ADDRESS=", address(yieldRelayer));
-        console.log("  OPTIMIZER_CONTRACT_ADDRESS=", address(yieldOptimizer));
-        console.log("  USDC_ADDRESS=", usdcAddress);
-        console.log("  PAYMASTER_ADDRESS=", paymasterAddress);
-        console.log("  ROUTER_ADDRESS=", routerAddress);
-        console.log("");
-        console.log("Frontend viemConfig.ts CONTRACTS:");
-        console.log("");
-        console.log("  YIELD_OPTIMIZER:", address(yieldOptimizer));
-        console.log("  YIELD_RELAYER:  ", address(yieldRelayer));
-        console.log("  USDC:           ", usdcAddress);
-        console.log("");
-        console.log("Somnia Testnet Explorer:");
-        console.log(
-            "  Relayer:   https://shannon-explorer.somnia.network/address/",
-            address(yieldRelayer)
-        );
-        console.log(
-            "  Optimizer: https://shannon-explorer.somnia.network/address/",
-            address(yieldOptimizer)
-        );
+        console.log("  USDC_ADDRESS=", address(usdc));
+        console.log("  TARGET_TOKEN_ADDRESS=", address(targetToken));
+        console.log("  ROUTER_ADDRESS=", address(mockDex));
+        console.log("  FACTORY_ADDRESS=", address(mockFactory));
+        console.log("  YIELD_RELAYER_ADDRESS=", address(yieldRelayer));
+        console.log("  YIELD_OPTIMIZER_ADDRESS=", address(yieldOptimizer));
         console.log("");
         console.log("========================================");
-        console.log("  DEPLOY COMMAND:");
-        console.log("  forge script script/Deploy.s.sol \\");
-        console.log(
-            "    --rpc-url https://api.infra.testnet.somnia.network \\"
-        );
-        console.log("    --account <your-keystore-name> \\");
-        console.log("    --sender <your-deployer-address> \\");
-        console.log("    --gas-estimate-multiplier 200 \\");
-        console.log("    --broadcast");
-        console.log("========================================");
+
+        // ─────────────────────────────────────────────────
+        //  8. Return deployed addresses for testing
+        // ─────────────────────────────────────────────────
+        return (address(usdc), address(targetToken), address(mockDex), address(yieldRelayer), address(yieldOptimizer));
     }
 }

@@ -50,11 +50,7 @@ interface ISomniaReactivity {
     /// @param subscriber The address of the contract that subscribed.
     /// @param source The address of the contract whose event is being monitored.
     /// @param eventSignature The `keccak256` hash of the event signature being tracked.
-    event Subscribed(
-        address indexed subscriber,
-        address indexed source,
-        bytes32 indexed eventSignature
-    );
+    event Subscribed(address indexed subscriber, address indexed source, bytes32 indexed eventSignature);
 
     /*//////////////////////////////////////////////////////////////
                          SUBSCRIPTION FUNCTIONS
@@ -80,10 +76,7 @@ interface ISomniaReactivity {
     ///        Must be a deployed contract that emits the target event.
     /// @param eventSignature The `keccak256` hash of the full event signature to listen for
     ///        (e.g., `keccak256("YieldUpdated(uint256,address)")`).
-    function subscribe(
-        address contractAddress,
-        bytes32 eventSignature
-    ) external;
+    function subscribe(address contractAddress, bytes32 eventSignature) external;
 
     /*//////////////////////////////////////////////////////////////
                           CALLBACK INTERFACE

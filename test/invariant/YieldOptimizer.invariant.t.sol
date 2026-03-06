@@ -163,35 +163,20 @@ contract YieldOptimizerInvariantTest is Test {
 
         // --- 5. Deploy mock factory and register the USDC-TGT pair ---
         factory = new MockUniswapV2Factory();
-        factory.setPair(
-            address(usdc),
-            address(targetToken),
-            makeAddr("usdc-tgt-pair")
-        );
+        factory.setPair(address(usdc), address(targetToken), makeAddr("usdc-tgt-pair"));
         dex.setFactory(address(factory));
 
         // --- 6. Deploy mock yield farm ---
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 7. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(
-            address(usdc),
-            paymaster,
-            trustedOracle,
-            address(dex),
-            MAX_LOSS_THRESHOLD
-        );
+        optimizer = new YieldOptimizer(address(usdc), paymaster, trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
 
         // --- 8. Seed USDC into the optimizer ---
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
 
         // --- 9. Configure DEX reserves ---
-        dex.setReserves(
-            address(usdc),
-            address(targetToken),
-            DEX_RESERVE_USDC,
-            DEX_RESERVE_TARGET
-        );
+        dex.setReserves(address(usdc), address(targetToken), DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
 
         // --- 10. Pre-fund the DEX with target tokens ---
         targetToken.mint(address(dex), DEX_RESERVE_TARGET);
@@ -206,14 +191,7 @@ contract YieldOptimizerInvariantTest is Test {
         vm.deal(address(optimizer), 100 ether);
 
         // --- 14. Deploy the handler and scope the fuzzer ---
-        handler = new YieldOptimizerHandler(
-            optimizer,
-            usdc,
-            targetToken,
-            dex,
-            farm,
-            trustedOracle
-        );
+        handler = new YieldOptimizerHandler(optimizer, usdc, targetToken, dex, farm, trustedOracle);
 
         // Tell the invariant runner to ONLY call the handler
         targetContract(address(handler));
@@ -239,10 +217,7 @@ contract YieldOptimizerInvariantTest is Test {
     ///
     /// @param randomAPY Fuzz-provided APY (bounded to [0, type(uint128).max]).
     /// @param randomSlippage Fuzz-provided reserve denominator (bounded to [1, type(uint128).max]).
-    function testFuzz_MathLogic(
-        uint256 randomAPY,
-        uint256 randomSlippage
-    ) public pure {
+    function testFuzz_MathLogic(uint256 randomAPY, uint256 randomSlippage) public pure {
         // --- Bound inputs ---
         // Cap at uint128 max so that intermediate products (uint128 × uint128) remain
         // within uint256 range, mirroring realistic on-chain conditions.
@@ -270,8 +245,7 @@ contract YieldOptimizerInvariantTest is Test {
 
         // --- Step 4: Total cost with safety buffer ---
         // (gasCost + slippage) ≤ (5e13 + 1e24) ≈ 1e24. Multiply by 11 → 1.1e25, safe.
-        uint256 totalCostWithBuffer = ((gasCost + slippage) *
-            SAFETY_BUFFER_NUMERATOR) / SAFETY_BUFFER_DENOMINATOR;
+        uint256 totalCostWithBuffer = ((gasCost + slippage) * SAFETY_BUFFER_NUMERATOR) / SAFETY_BUFFER_DENOMINATOR;
 
         // --- Step 5: Profitability gate assertion ---
         // The gate is a pure boolean — verify the partition is exhaustive and correct.
@@ -279,18 +253,10 @@ contract YieldOptimizerInvariantTest is Test {
 
         if (isProfitable) {
             // If profitable, the yield MUST strictly exceed the buffered cost.
-            assertGt(
-                deltaY,
-                totalCostWithBuffer,
-                "Profitable branch: deltaY must exceed totalCostWithBuffer"
-            );
+            assertGt(deltaY, totalCostWithBuffer, "Profitable branch: deltaY must exceed totalCostWithBuffer");
         } else {
             // If not profitable, deltaY MUST be at or below the buffered cost.
-            assertLe(
-                deltaY,
-                totalCostWithBuffer,
-                "Unprofitable branch: deltaY must not exceed totalCostWithBuffer"
-            );
+            assertLe(deltaY, totalCostWithBuffer, "Unprofitable branch: deltaY must not exceed totalCostWithBuffer");
         }
 
         // --- Overflow proof ---
@@ -333,10 +299,7 @@ contract YieldOptimizerInvariantTest is Test {
 
         // Complementary check: if loss has reached or exceeded threshold, paused MUST be true
         if (currentLoss >= threshold) {
-            assertTrue(
-                paused,
-                "INVARIANT VIOLATED: cumulativeLoss >= maxLossThreshold but isPaused is false"
-            );
+            assertTrue(paused, "INVARIANT VIOLATED: cumulativeLoss >= maxLossThreshold but isPaused is false");
         }
     }
 }

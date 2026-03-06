@@ -46,9 +46,7 @@ interface IYieldFarm {
     ///      value of its current farm position without redeeming.
     /// @param shares The number of vault shares to convert.
     /// @return assets The equivalent amount of underlying USDC.
-    function convertToAssets(
-        uint256 shares
-    ) external view returns (uint256 assets);
+    function convertToAssets(uint256 shares) external view returns (uint256 assets);
 
     /*//////////////////////////////////////////////////////////////
                         DEPOSIT / REDEEM FUNCTIONS
@@ -72,10 +70,7 @@ interface IYieldFarm {
     /// @param assets The exact amount of underlying USDC to deposit.
     /// @param receiver The address that will receive the minted vault shares.
     /// @return shares The number of vault shares minted to `receiver`.
-    function deposit(
-        uint256 assets,
-        address receiver
-    ) external returns (uint256 shares);
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
 
     /// @notice Burns an exact number of vault shares from `owner` and sends the proportional
     ///         amount of the underlying asset (USDC) to `receiver`.
@@ -96,9 +91,5 @@ interface IYieldFarm {
     /// @param owner The address whose shares are being redeemed. If different from
     ///        `msg.sender`, the caller must have approval via the ERC-20 allowance mechanism.
     /// @return assets The amount of underlying USDC sent to `receiver`.
-    function redeem(
-        uint256 shares,
-        address receiver,
-        address owner
-    ) external returns (uint256 assets);
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
 }

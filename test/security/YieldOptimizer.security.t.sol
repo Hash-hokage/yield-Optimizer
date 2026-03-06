@@ -71,35 +71,20 @@ contract YieldOptimizerSecurityTest is Test {
 
         // --- 5. Deploy mock factory and register the USDC-TGT pair ---
         factory = new MockUniswapV2Factory();
-        factory.setPair(
-            address(usdc),
-            address(targetToken),
-            makeAddr("usdc-tgt-pair")
-        );
+        factory.setPair(address(usdc), address(targetToken), makeAddr("usdc-tgt-pair"));
         dex.setFactory(address(factory));
 
         // --- 6. Deploy mock yield farm with the target token as underlying ---
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 7. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(
-            address(usdc),
-            paymaster,
-            trustedOracle,
-            address(dex),
-            MAX_LOSS_THRESHOLD
-        );
+        optimizer = new YieldOptimizer(address(usdc), paymaster, trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
 
         // --- 8. Seed USDC into the optimizer ---
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
 
         // --- 9. Configure DEX reserves ---
-        dex.setReserves(
-            address(usdc),
-            address(targetToken),
-            DEX_RESERVE_USDC,
-            DEX_RESERVE_TARGET
-        );
+        dex.setReserves(address(usdc), address(targetToken), DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
 
         // --- 10. Pre-fund the DEX with target tokens so it can fulfil swaps ---
         targetToken.mint(address(dex), DEX_RESERVE_TARGET);
@@ -130,9 +115,7 @@ contract YieldOptimizerSecurityTest is Test {
 
         // --- Act + Assert ---
         vm.prank(attacker);
-        vm.expectRevert(
-            YieldOptimizer.YieldOptimizer__UnauthorizedCallback.selector
-        );
+        vm.expectRevert(YieldOptimizer.YieldOptimizer__UnauthorizedCallback.selector);
         optimizer.onYieldUpdated(maliciousAPY, address(farm));
     }
 
@@ -161,12 +144,7 @@ contract YieldOptimizerSecurityTest is Test {
         // but the DEX only has 100 TGT → transfer reverts.
 
         // Remove all existing TGT from the DEX by setting reserves fresh
-        dex.setReserves(
-            address(usdc),
-            address(targetToken),
-            DEX_RESERVE_USDC,
-            DEX_RESERVE_TARGET
-        );
+        dex.setReserves(address(usdc), address(targetToken), DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
 
         // Drain the DEX's actual TGT token balance to far below what the swap needs
         // (the MockDEX can still compute getAmountsOut from reserves, but can't fulfil
@@ -217,12 +195,7 @@ contract YieldOptimizerSecurityTest is Test {
         uint256 skewedUSDCReserve = DEX_RESERVE_USDC * 10_000; // 10T USDC in pool
         uint256 skewedTargetReserve = DEX_RESERVE_TARGET / 10_000; // 100K TGT in pool
 
-        dex.setReserves(
-            address(usdc),
-            address(targetToken),
-            skewedUSDCReserve,
-            skewedTargetReserve
-        );
+        dex.setReserves(address(usdc), address(targetToken), skewedUSDCReserve, skewedTargetReserve);
 
         // Update cached reserves to match the skewed pool so minAmountOut passes
         optimizer.updateCachedReserves(skewedUSDCReserve, skewedTargetReserve);
@@ -234,11 +207,7 @@ contract YieldOptimizerSecurityTest is Test {
         // The constant-product formula always returns a tiny amount, so loss is never
         // exactly 100%. Setting threshold to 999K USDC ensures the ~99.999% loss trips it.
         // Storage slot 1 = maxLossThreshold (verified via `forge inspect`).
-        vm.store(
-            address(optimizer),
-            bytes32(uint256(1)),
-            bytes32(uint256(999_000e6))
-        );
+        vm.store(address(optimizer), bytes32(uint256(1)), bytes32(uint256(999_000e6)));
 
         // Sanity: contract is NOT paused before we begin
         assertFalse(optimizer.isPaused(), "Should not be paused initially");
@@ -250,16 +219,11 @@ contract YieldOptimizerSecurityTest is Test {
         // --- Assert ---
 
         // 1. isPaused must be true — circuit breaker has tripped
-        assertTrue(
-            optimizer.isPaused(),
-            "isPaused should be true after breaker trips"
-        );
+        assertTrue(optimizer.isPaused(), "isPaused should be true after breaker trips");
 
         // 2. cumulativeLoss must be at or above the adjusted threshold (999_000e6)
         assertGe(
-            optimizer.cumulativeLoss(),
-            999_000e6,
-            "cumulativeLoss should meet or exceed adjusted maxLossThreshold"
+            optimizer.cumulativeLoss(), 999_000e6, "cumulativeLoss should meet or exceed adjusted maxLossThreshold"
         );
 
         // 3. Attempting another callback must revert with YieldOptimizer__Paused
