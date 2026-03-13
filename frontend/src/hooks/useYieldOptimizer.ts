@@ -1,94 +1,127 @@
-"use client";
+import { useReadContract, useWriteContract, useAccount } from 'wagmi'
+import { yieldOptimizerABI } from '@/abi/YieldOptimizer'
+import { mockERC20ABI } from '@/abi/MockERC20'
+import { Address } from 'viem'
 
-import { useState, useEffect } from "react";
-// import { publicClient, CONTRACTS } from "@/lib/viemConfig";
+const OPTIMIZER_ADDRESS = process.env.NEXT_PUBLIC_YIELD_OPTIMIZER_ADDRESS as Address
+const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_ADDRESS as Address
 
-/**
- * ABI fragments for YieldOptimizer read functions.
- * Uncomment and use when contract is deployed.
- */
-// const YIELD_OPTIMIZER_ABI = [
-//   { name: "currentFarm", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-//   { name: "isPaused", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
-//   { name: "cumulativeLoss", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-//   { name: "maxLossThreshold", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-//   { name: "trustedOracle", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-//   { name: "cachedReserveUSDC", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-//   { name: "cachedReserveTarget", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-//   { name: "owner", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-// ] as const;
+export function useYieldOptimizer() {
+  const { address } = useAccount()
 
-export interface YieldOptimizerState {
-  currentFarm: string;
-  currentAPY: string;
-  totalValueOptimized: string;
-  cumulativeLoss: string;
-  maxLossThreshold: string;
-  isPaused: boolean;
-  trustedOracle: string;
-  cachedReserveUSDC: string;
-  isLoading: boolean;
-}
+  // --- READS ---
 
-/**
- * Hook to read on-chain state from the YieldOptimizer contract.
- *
- * Currently returns mock/skeleton data. Once the contract is deployed on Somnia
- * Testnet, uncomment the `publicClient.readContract(...)` calls below and
- * replace the mock data with real reads.
- */
-export function useYieldOptimizer(): YieldOptimizerState {
-  const [state, setState] = useState<YieldOptimizerState>({
-    currentFarm: "",
-    currentAPY: "0",
-    totalValueOptimized: "0",
-    cumulativeLoss: "0",
-    maxLossThreshold: "0",
-    isPaused: false,
-    trustedOracle: "",
-    cachedReserveUSDC: "0",
-    isLoading: true,
-  });
+  const { data: usdcBalance, refetch: refetchUsdcBalance } = useReadContract({
+    address: USDC_ADDRESS,
+    abi: mockERC20ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address },
+  })
 
-  useEffect(() => {
-    const fetchContractState = async () => {
-      try {
-        // ──────────────────────────────────────────────
-        // TODO: Replace with real contract reads once deployed
-        // ──────────────────────────────────────────────
-        //
-        // const [currentFarm, isPaused, cumulativeLoss, maxLossThreshold, trustedOracle, cachedReserveUSDC] =
-        //   await Promise.all([
-        //     publicClient.readContract({ address: CONTRACTS.YIELD_OPTIMIZER, abi: YIELD_OPTIMIZER_ABI, functionName: "currentFarm" }),
-        //     publicClient.readContract({ address: CONTRACTS.YIELD_OPTIMIZER, abi: YIELD_OPTIMIZER_ABI, functionName: "isPaused" }),
-        //     publicClient.readContract({ address: CONTRACTS.YIELD_OPTIMIZER, abi: YIELD_OPTIMIZER_ABI, functionName: "cumulativeLoss" }),
-        //     publicClient.readContract({ address: CONTRACTS.YIELD_OPTIMIZER, abi: YIELD_OPTIMIZER_ABI, functionName: "maxLossThreshold" }),
-        //     publicClient.readContract({ address: CONTRACTS.YIELD_OPTIMIZER, abi: YIELD_OPTIMIZER_ABI, functionName: "trustedOracle" }),
-        //     publicClient.readContract({ address: CONTRACTS.YIELD_OPTIMIZER, abi: YIELD_OPTIMIZER_ABI, functionName: "cachedReserveUSDC" }),
-        //   ]);
+  const { data: usdcAllowance, refetch: refetchUsdcAllowance } = useReadContract({
+    address: USDC_ADDRESS,
+    abi: mockERC20ABI,
+    functionName: 'allowance',
+    args: address ? [address, OPTIMIZER_ADDRESS] : undefined,
+    query: { enabled: !!address },
+  })
 
-        // Simulate network delay for skeleton loader demonstration
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+  const { data: userShares, refetch: refetchUserShares } = useReadContract({
+    address: OPTIMIZER_ADDRESS,
+    abi: yieldOptimizerABI,
+    functionName: 'userShares',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address },
+  })
 
-        setState({
-          currentFarm: "0x1a2b...3c4d",
-          currentAPY: "12.45",
-          totalValueOptimized: "1,248,320",
-          cumulativeLoss: "142",
-          maxLossThreshold: "10,000",
-          isPaused: false,
-          trustedOracle: "0x5e6f...7a8b",
-          cachedReserveUSDC: "500,000",
-          isLoading: false,
-        });
-      } catch (error) {
-        console.error("Failed to fetch contract state:", error);
-        setState((prev) => ({ ...prev, isLoading: false }));
-      }
-    };
+  const { data: totalOptimizerShares, refetch: refetchTotalShares } = useReadContract({
+    address: OPTIMIZER_ADDRESS,
+    abi: yieldOptimizerABI,
+    functionName: 'totalOptimizerShares',
+  })
 
-    fetchContractState();
-  }, []);
+  // --- WRITES ---
 
-  return state;
+  const { writeContractAsync: mintTestUSDC, isPending: isMinting } = useWriteContract()
+  const { writeContractAsync: approveUSDC, isPending: isApproving } = useWriteContract()
+  const { writeContractAsync: deposit, isPending: isDepositing } = useWriteContract()
+  const { writeContractAsync: withdraw, isPending: isWithdrawing } = useWriteContract()
+
+  // --- WRAPPER FUNCTIONS ---
+
+  const handleMintTestUSDC = async (amount: bigint) => {
+    if (!address) return
+    await mintTestUSDC({
+      address: USDC_ADDRESS,
+      abi: mockERC20ABI,
+      functionName: 'mint',
+      args: [address, amount],
+    })
+    refetchUsdcBalance()
+  }
+
+  const handleApproveUSDC = async (amount: bigint) => {
+    await approveUSDC({
+      address: USDC_ADDRESS,
+      abi: mockERC20ABI,
+      functionName: 'approve',
+      args: [OPTIMIZER_ADDRESS, amount],
+    })
+    refetchUsdcAllowance()
+  }
+
+  const handleDeposit = async (amount: bigint) => {
+    await deposit({
+      address: OPTIMIZER_ADDRESS,
+      abi: yieldOptimizerABI,
+      functionName: 'deposit',
+      args: [amount],
+    })
+    refetchUsdcBalance()
+    refetchUsdcAllowance()
+    refetchUserShares()
+    refetchTotalShares()
+  }
+
+  const handleWithdraw = async (shares: bigint) => {
+    await withdraw({
+      address: OPTIMIZER_ADDRESS,
+      abi: yieldOptimizerABI,
+      functionName: 'withdraw',
+      args: [shares],
+    })
+    refetchUsdcBalance()
+    refetchUserShares()
+    refetchTotalShares()
+  }
+
+  const refetchAll = () => {
+    refetchUsdcBalance()
+    refetchUsdcAllowance()
+    refetchUserShares()
+    refetchTotalShares()
+  }
+
+  return {
+    // State
+    address,
+    usdcBalance,
+    usdcAllowance,
+    userShares,
+    totalOptimizerShares,
+    
+    // Loading States
+    isMinting,
+    isApproving,
+    isDepositing,
+    isWithdrawing,
+    
+    // Actions
+    handleMintTestUSDC,
+    handleApproveUSDC,
+    handleDeposit,
+    handleWithdraw,
+    refetchAll,
+  }
 }

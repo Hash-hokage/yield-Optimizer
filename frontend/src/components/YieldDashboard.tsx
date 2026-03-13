@@ -7,7 +7,6 @@ import {
   TrendingUp,
   DollarSign,
   ShieldCheck,
-  ShieldAlert,
   ChevronDown,
   Sparkles,
   ArrowRight,
@@ -21,7 +20,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useYieldOptimizer } from "@/hooks/useYieldOptimizer";
-import { useAccountAbstraction } from "@/hooks/useAccountAbstraction";
+import { parseUnits, formatUnits } from "viem";
 
 /* ─────────────────────────────────────────
    Animation variants
@@ -117,7 +116,7 @@ const SOMNIA_FARMS = [
    ═════════════════════════════════════════ */
 export default function YieldDashboard() {
   const optimizer = useYieldOptimizer();
-  const { isLoggedIn, isSendingOp, sendGaslessOp } = useAccountAbstraction();
+  const isLoggedIn = !!optimizer.address;
 
   const [amount, setAmount] = useState("");
   const [selectedFarm, setSelectedFarm] = useState(SOMNIA_FARMS[0].id);
@@ -125,14 +124,29 @@ export default function YieldDashboard() {
 
   const selectedFarmData = SOMNIA_FARMS.find((f) => f.id === selectedFarm)!;
 
+  // Real-time parsed formatted values
+  const displayUsdc = optimizer.usdcBalance ? formatUnits(optimizer.usdcBalance as bigint, 6) : "0";
+  const displayShares = optimizer.userShares ? formatUnits(optimizer.userShares as bigint, 6) : "0";
+  
+  // Deposit Math
+  const depositValueBigInt = amount ? parseUnits(amount, 6) : BigInt(0);
+  const currentAllowance = (optimizer.usdcAllowance as bigint) || BigInt(0);
+  const needsApproval = depositValueBigInt > currentAllowance;
+
   const handleOptimize = async () => {
-    if (!amount || !isLoggedIn) return;
-    // TODO: Encode the calldata for YieldOptimizer and send via AA
-    await sendGaslessOp(
-      "0x0000000000000000000000000000000000000000",
-      "0x",
-      "0"
-    );
+    if (!depositValueBigInt || !isLoggedIn) return;
+    
+    if (needsApproval) {
+      await optimizer.handleApproveUSDC(depositValueBigInt);
+    } else {
+      await optimizer.handleDeposit(depositValueBigInt);
+      setAmount(""); // clear on success
+    }
+  };
+
+  const handleWithdrawAll = async () => {
+    if (!optimizer.userShares || (optimizer.userShares as bigint) === BigInt(0)) return;
+    await optimizer.handleWithdraw(optimizer.userShares as bigint);
   };
 
   return (
@@ -173,23 +187,23 @@ export default function YieldDashboard() {
                 <StatRow
                   icon={Activity}
                   label="Active Farm"
-                  value={optimizer.currentFarm || "None"}
-                  isLoading={optimizer.isLoading}
+                  value={selectedFarmData.name}
+                  isLoading={false}
                   accent="text-cyan-400"
                 />
                 <StatRow
                   icon={TrendingUp}
-                  label="Current APY"
-                  value={optimizer.currentAPY}
-                  suffix="%"
-                  isLoading={optimizer.isLoading}
+                  label="Your Vault Shares"
+                  value={Number(displayShares).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                  suffix="yOpt"
+                  isLoading={false}
                   accent="text-emerald-400"
                 />
                 <StatRow
                   icon={DollarSign}
                   label="Total Value Optimized"
-                  value={`$${optimizer.totalValueOptimized}`}
-                  isLoading={optimizer.isLoading}
+                  value={`$1,420,690`} // Mock TVL
+                  isLoading={false}
                   accent="text-violet-400"
                 />
               </motion.div>
@@ -203,53 +217,33 @@ export default function YieldDashboard() {
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">RiskGuard</CardTitle>
-                {optimizer.isLoading ? (
-                  <Skeleton className="h-6 w-20" />
-                ) : (
                   <motion.div
                     initial={{ scale: 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     transition={{ delay: 0.3 }}
                   >
-                    {optimizer.isPaused ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-400 ring-1 ring-red-500/20">
-                        <ShieldAlert className="h-3 w-3" />
-                        Paused
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400 ring-1 ring-emerald-500/20">
-                        <ShieldCheck className="h-3 w-3" />
-                        Active
-                      </span>
-                    )}
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400 ring-1 ring-emerald-500/20">
+                      <ShieldCheck className="h-3 w-3" />
+                      Active
+                    </span>
                   </motion.div>
-                )}
               </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-zinc-500">Cumulative Loss</span>
-                  {optimizer.isLoading ? (
-                    <Skeleton className="h-4 w-16" />
-                  ) : (
-                    <span className="text-zinc-300 font-mono tabular-nums">
-                      ${optimizer.cumulativeLoss}
-                    </span>
-                  )}
+                  <span className="text-zinc-300 font-mono tabular-nums">
+                    $0.00
+                  </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-zinc-500">Max Threshold</span>
-                  {optimizer.isLoading ? (
-                    <Skeleton className="h-4 w-16" />
-                  ) : (
-                    <span className="text-zinc-300 font-mono tabular-nums">
-                      ${optimizer.maxLossThreshold}
-                    </span>
-                  )}
+                  <span className="text-zinc-300 font-mono tabular-nums">
+                    $100,000
+                  </span>
                 </div>
                 {/* Progress bar */}
-                {!optimizer.isLoading && (
                   <motion.div
                     initial={{ scaleX: 0 }}
                     animate={{ scaleX: 1 }}
@@ -259,18 +253,10 @@ export default function YieldDashboard() {
                     <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
                       <div
                         className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-700"
-                        style={{
-                          width: `${Math.min(
-                            (parseFloat(optimizer.cumulativeLoss.replace(/,/g, "")) /
-                              parseFloat(optimizer.maxLossThreshold.replace(/,/g, ""))) *
-                              100,
-                            100
-                          )}%`,
-                        }}
+                        style={{ width: `0%` }}
                       />
                     </div>
                   </motion.div>
-                )}
               </div>
             </CardContent>
           </Card>
@@ -304,7 +290,7 @@ export default function YieldDashboard() {
                     Amount
                   </label>
                   <span className="text-xs text-zinc-600">
-                    Balance: <span className="text-zinc-400 font-mono">--</span>
+                    Balance: <span className="text-zinc-400 font-mono">{Number(displayUsdc).toLocaleString()} USDC</span>
                   </span>
                 </div>
                 <div className="relative">
@@ -323,7 +309,7 @@ export default function YieldDashboard() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setAmount("10000")} // placeholder max
+                      onClick={() => setAmount(displayUsdc)}
                       className="text-xs text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 h-7 px-2"
                     >
                       Max
@@ -449,27 +435,64 @@ export default function YieldDashboard() {
                 variant="glow"
                 size="lg"
                 className="w-full text-base"
-                disabled={!amount || !isLoggedIn || isSendingOp}
+                disabled={!amount || !isLoggedIn || optimizer.isApproving || optimizer.isDepositing}
                 onClick={handleOptimize}
               >
-                {isSendingOp ? (
+                {optimizer.isApproving || optimizer.isDepositing ? (
                   <div className="flex items-center gap-2">
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-900 border-t-transparent" />
-                    Optimizing...
+                    {optimizer.isApproving ? "Approving USDC..." : "Depositing..."}
                   </div>
                 ) : !isLoggedIn ? (
                   "Connect Wallet to Optimize"
+                ) : needsApproval ? (
+                  <>
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    Approve USDC
+                  </>
                 ) : (
                   <>
                     <Sparkles className="mr-2 h-4 w-4" />
-                    Optimize Yield (Gasless)
+                    Optimize Yield
                   </>
                 )}
               </Button>
 
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full text-xs"
+                  disabled={optimizer.isMinting || !isLoggedIn}
+                  onClick={async (e) => {
+                    e.preventDefault(); // Prevent any default HTML form submission behavior
+                    console.log("🚨 TRACER BULLET: The physical click was detected by React!");
+                    console.log("🚨 Is the mint hook defined?", !!optimizer.handleMintTestUSDC);
+                    try {
+                      console.log("🚨 Attempting Wagmi transaction...");
+                      await optimizer.handleMintTestUSDC(parseUnits("1000", 6));
+                      console.log("🚨 Transaction sent to wallet.");
+                    } catch (error) {
+                      console.error("🚨 WAGMI ERROR CAUGHT:", error);
+                    }
+                  }}
+                >
+                  {optimizer.isMinting ? "Minting..." : "💧 Faucet 1k USDC"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full text-xs border-red-900/30 hover:bg-red-500/10 text-red-400"
+                  disabled={optimizer.isWithdrawing || !isLoggedIn || !optimizer.userShares || (optimizer.userShares as bigint) === BigInt(0)}
+                  onClick={handleWithdrawAll}
+                >
+                  {optimizer.isWithdrawing ? "Withdrawing..." : "Redeem All Shares"}
+                </Button>
+              </div>
+
               {/* ── Powered by badge ── */}
               <p className="text-center text-[11px] text-zinc-600">
-                Powered by Somnia Reactivity &bull; ERC-4337 Account Abstraction
+                Powered by Somnia Reactivity
               </p>
             </CardContent>
           </Card>
