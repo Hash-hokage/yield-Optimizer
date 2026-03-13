@@ -9,6 +9,7 @@ import {IUniswapV2Factory} from "./interfaces/IUniswapV2Factory.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title YieldOptimizer
 /// @author Hash-Hokage
@@ -34,7 +35,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///      (DEX swap + vault deposit), so the reactivity subscription `gasLimit` MUST be
 ///      set to at least `3_000_000` with `priorityFeePerGas >= 2 gwei` (2,000,000,000 wei).
 ///      See: Somnia Reactivity Precompile at `0x0000000000000000000000000000000000000100`.
-contract YieldOptimizer is Ownable {
+contract YieldOptimizer is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     /*//////////////////////////////////////////////////////////////
                               ERRORS
@@ -51,6 +52,12 @@ contract YieldOptimizer is Ownable {
 
     /// @dev Reverted when the paymaster reimbursement call fails.
     error YieldOptimizer__ReimbursementFailed();
+
+    /// @dev Reverted when a user tries to withdraw more shares than they hold.
+    error YieldOptimizer__InsufficientShares();
+
+    /// @dev Reverted when a zero-amount deposit or withdraw is attempted.
+    error YieldOptimizer__ZeroAmount();
 
     /*//////////////////////////////////////////////////////////////
                      NETWORK ADDRESSES (IMMUTABLE)
@@ -97,6 +104,17 @@ contract YieldOptimizer is Ownable {
     /// @notice Maps farm addresses to their whitelisted status.
     /// @dev Only whitelisted farms can be used as rebalance targets in `onYieldUpdated`.
     mapping(address => bool) public allowedFarms;
+
+    /*//////////////////////////////////////////////////////////////
+                     USER SHARE ACCOUNTING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Maps each depositor to their internal share balance.
+    /// @dev Shares represent a pro-rata claim on the optimizer's total portfolio value.
+    mapping(address => uint256) public userShares;
+
+    /// @notice Total supply of internal optimizer shares across all depositors.
+    uint256 public totalOptimizerShares;
 
     /*//////////////////////////////////////////////////////////////
                          REACTIVITY CACHE
@@ -149,6 +167,18 @@ contract YieldOptimizer is Ownable {
     /// @param totalLoss The cumulative loss value that triggered the guard.
     event RiskGuardTripped(uint256 totalLoss);
 
+    /// @notice Emitted when a user deposits USDC into the optimizer.
+    /// @param user The depositor's address.
+    /// @param assets The USDC amount deposited.
+    /// @param shares The internal shares minted to the user.
+    event Deposited(address indexed user, uint256 assets, uint256 shares);
+
+    /// @notice Emitted when a user withdraws USDC from the optimizer.
+    /// @param user The withdrawer's address.
+    /// @param shares The internal shares burned.
+    /// @param assets The USDC amount returned to the user.
+    event Withdrawn(address indexed user, uint256 shares, uint256 assets);
+
     /*//////////////////////////////////////////////////////////////
                             MODIFIERS
     //////////////////////////////////////////////////////////////*/
@@ -178,6 +208,86 @@ contract YieldOptimizer is Ownable {
         router = IDEXRouter(_router);
 
         maxLossThreshold = _maxLossThreshold;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                       USER DEPOSIT / WITHDRAW
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Deposits USDC into the optimizer and mints proportional internal shares.
+    /// @dev Share calculation:
+    ///      - First depositor: `shares = assets` (1:1 bootstrapping).
+    ///      - Subsequent depositors: `shares = assets × totalOptimizerShares / portfolioValue`.
+    ///      This ensures late depositors do not dilute early depositors' accrued yield.
+    /// @param assets The amount of USDC to deposit.
+    function deposit(uint256 assets) external whenNotPaused nonReentrant {
+        if (assets == 0) revert YieldOptimizer__ZeroAmount();
+
+        // --- 1. Snapshot portfolio value BEFORE the transfer ---
+        uint256 currentPortfolioValue = _getPortfolioValue();
+
+        // --- 2. Calculate shares to mint ---
+        uint256 shares;
+        if (totalOptimizerShares == 0) {
+            shares = assets;
+        } else {
+            shares = (assets * totalOptimizerShares) / currentPortfolioValue;
+        }
+        require(shares > 0, "YieldOptimizer: zero shares");
+
+        // --- 3. Pull USDC from the user ---
+        IERC20(usdc).safeTransferFrom(msg.sender, address(this), assets);
+
+        // --- 4. Update state ---
+        userShares[msg.sender] += shares;
+        totalOptimizerShares += shares;
+
+        emit Deposited(msg.sender, assets, shares);
+    }
+
+    /// @notice Burns internal shares and returns the proportional USDC value to the user.
+    /// @dev If the optimizer's idle USDC balance is insufficient, the function automatically
+    ///      redeems the exact shortfall from the current yield farm before transferring.
+    ///
+    ///      Farm-share calculation for partial liquidation:
+    ///      `farmSharesNeeded = shortfall × farmTotalSupply / farmTotalAssets`
+    ///      This converts the USDC shortfall into the farm's native share denomination.
+    /// @param shares The number of internal shares to redeem.
+    function withdraw(uint256 shares) external nonReentrant {
+        if (shares == 0) revert YieldOptimizer__ZeroAmount();
+        if (userShares[msg.sender] < shares) revert YieldOptimizer__InsufficientShares();
+
+        // --- 1. Calculate USDC owed ---
+        uint256 assetsOwed = (shares * _getPortfolioValue()) / totalOptimizerShares;
+
+        // --- 2. Update state (checks-effects-interactions) ---
+        userShares[msg.sender] -= shares;
+        totalOptimizerShares -= shares;
+
+        // --- 3. Liquidity check: pull shortfall from the farm if needed ---
+        uint256 idleUSDC = IERC20(usdc).balanceOf(address(this));
+
+        if (idleUSDC < assetsOwed && currentFarm != address(0)) {
+            uint256 shortfall = assetsOwed - idleUSDC;
+
+            // Convert USDC shortfall → farm shares using the farm's exchange rate
+            uint256 farmTotalAssets = IYieldFarm(currentFarm).totalAssets();
+            uint256 farmTotalSupply = IERC20(currentFarm).totalSupply();
+            uint256 farmSharesNeeded = (shortfall * farmTotalSupply) / farmTotalAssets;
+
+            IYieldFarm(currentFarm).redeem(farmSharesNeeded, address(this), address(this));
+        }
+
+        // --- 4. Cap assetsOwed to actual balance (absorbs rounding dust from farm redemption) ---
+        uint256 actualBalance = IERC20(usdc).balanceOf(address(this));
+        if (assetsOwed > actualBalance) {
+            assetsOwed = actualBalance;
+        }
+
+        // --- 5. Transfer USDC to the user ---
+        IERC20(usdc).safeTransfer(msg.sender, assetsOwed);
+
+        emit Withdrawn(msg.sender, shares, assetsOwed);
     }
 
     /*//////////////////////////////////////////////////////////////

@@ -13,8 +13,6 @@ docs/
 # Dotenv file
 .env
 
-# Agent config
-.agent/
 
 # Node dependencies
 node_modules/
