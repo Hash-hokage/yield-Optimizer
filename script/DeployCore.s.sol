@@ -10,14 +10,12 @@ import {YieldOptimizer} from "../src/YieldOptimizer.sol";
 /// @notice Deploys the core Yield Optimizer architecture and subscribes to
 ///         Somnia Reactivity.
 /// @dev Reads sandbox addresses from environment variables (output of DeployMocks),
-///      deploys `YieldRelayer` and `YieldOptimizer`, then creates a reactivity
-///      subscription on the Somnia Precompile at `0x0100`.
+///      deploys `YieldRelayer` and `YieldOptimizer`.
 ///
 ///      **Environment Variables Required:**
 ///      - `USDC_ADDRESS`       — Mock USDC deployed by DeployMocks
 ///      - `MOCK_FARM_ADDRESS`  — MockYieldFarm deployed by DeployMocks
-///      - `ROUTER_ADDRESS`     — Mock DEX Router deployed by DeployMocks
-///      - `PAYMASTER_ADDRESS`  — Paymaster for gas reimbursement
+///      - `ROUTER_ADDRESS`     — Real DEX Router or address(0) for local tests
 ///
 ///      **Deployment Command (Somnia Testnet):**
 ///      ```bash
@@ -53,8 +51,7 @@ contract DeployCore is Script {
         // ─────────────────────────────────────────────────
         address usdcAddress = vm.envAddress("USDC_ADDRESS");
         address mockFarmAddress = vm.envAddress("MOCK_FARM_ADDRESS");
-        address routerAddress = vm.envAddress("ROUTER_ADDRESS");
-        address paymasterAddress = vm.envAddress("PAYMASTER_ADDRESS");
+        address routerAddress = vm.envOr("ROUTER_ADDRESS", address(0));
 
         console.log("========================================");
         console.log("  DEPLOY CORE -- THE APPLICATION");
@@ -63,18 +60,16 @@ contract DeployCore is Script {
         console.log("USDC:                ", usdcAddress);
         console.log("MockFarm:            ", mockFarmAddress);
         console.log("Router:              ", routerAddress);
-        console.log("Paymaster:           ", paymasterAddress);
         console.log("Max Loss Threshold:  ", MAX_LOSS_THRESHOLD);
         console.log("");
 
         // ─────────────────────────────────────────────────
         //  2. Start broadcast (uses --account deployer keystore)
         // ─────────────────────────────────────────────────
-        vm.startBroadcast();
-
         address deployer = msg.sender;
         console.log("Deployer:            ", deployer);
         console.log("Deployer balance:    ", deployer.balance);
+        vm.startBroadcast(deployer);
 
         require(
             deployer.balance >= SUBSCRIPTION_DEPOSIT,
@@ -92,7 +87,6 @@ contract DeployCore is Script {
         // ─────────────────────────────────────────────────
         YieldOptimizer yieldOptimizer = new YieldOptimizer(
             usdcAddress,
-            paymasterAddress,
             address(yieldRelayer), // trustedOracle
             routerAddress,
             MAX_LOSS_THRESHOLD
@@ -102,15 +96,6 @@ contract DeployCore is Script {
         // ─────────────────────────────────────────────────
         //  5. Somnia Reactivity Subscription
         // ─────────────────────────────────────────────────
-        // Note: The on-chain canonical Somnia Reactivity Precompile (0x0100)
-        // requires the `subscribe(SubscriptionData)` signature, and handlers
-        // must implement `onEvent(address,bytes32[],bytes)`.
-        //
-        // Because YieldOptimizer implements `onYieldUpdated(uint256,address)`
-        // directly and verifies `msg.sender == trustedOracle`, it is designed
-        // for an OFF-CHAIN subscription using the TypeScript SDK.
-        // Therefore, we do not subscribe on-chain here.
-
         console.log("");
         console.log("--- Reactivity Subscription ---");
         console.log("YieldOptimizer verifies msg.sender == YieldRelayer.");

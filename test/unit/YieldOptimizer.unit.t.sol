@@ -30,7 +30,6 @@ contract YieldOptimizerUnitTest is Test {
     MockYieldFarm public farm;
     MockUniswapV2Factory public factory;
 
-    address public paymaster;
     address public trustedOracle;
 
     /// @dev Constants matching the values in YieldOptimizer.
@@ -64,9 +63,6 @@ contract YieldOptimizerUnitTest is Test {
         oracle = new MockOracle();
         trustedOracle = address(oracle);
 
-        // --- 3. Create paymaster as a simple labeled address ---
-        paymaster = makeAddr("paymaster");
-
         // --- 4. Deploy mock DEX router ---
         dex = new MockDEX();
 
@@ -80,7 +76,7 @@ contract YieldOptimizerUnitTest is Test {
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 7. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(address(usdc), paymaster, trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
+        optimizer = new YieldOptimizer(address(usdc), trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
 
         // --- 8. Seed USDC into the optimizer ---
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
@@ -113,7 +109,6 @@ contract YieldOptimizerUnitTest is Test {
     function test_ExecuteRebalance_Profitable() public {
         // --- Arrange ---
         uint256 highAPY = 5000; // 50% in basis points → very large ΔY to exceed (G+S)×1.1
-        uint256 paymasterBalanceBefore = paymaster.balance;
 
         // Use a very low gas price so the gas cost is negligible compared to ΔY
         vm.txGasPrice(1 wei);
@@ -142,10 +137,6 @@ contract YieldOptimizerUnitTest is Test {
         uint256 optimizerShares = farm.balanceOf(address(optimizer));
         assertGt(optimizerShares, 0, "Optimizer should hold farm shares");
 
-        // 4. Paymaster was reimbursed with ETH
-        uint256 paymasterBalanceAfter = paymaster.balance;
-        assertGt(paymasterBalanceAfter, paymasterBalanceBefore, "Paymaster should have received ETH reimbursement");
-
         // 5. currentFarm is set to the target farm
         assertEq(optimizer.currentFarm(), address(farm), "currentFarm should be updated to target farm");
     }
@@ -163,7 +154,6 @@ contract YieldOptimizerUnitTest is Test {
         // --- Arrange ---
         uint256 tinyAPY = 1; // 0.01% in basis points → negligible ΔY
         uint256 optimizerUsdcBefore = usdc.balanceOf(address(optimizer));
-        uint256 paymasterBalanceBefore = paymaster.balance;
 
         // Use a high gas price so the gas cost dominates and ΔY <= (G+S) × 1.1
         vm.txGasPrice(100 gwei);
@@ -186,8 +176,5 @@ contract YieldOptimizerUnitTest is Test {
         // 3. currentFarm remains unset
         assertEq(optimizer.currentFarm(), address(0), "currentFarm should remain address(0)");
 
-        // 4. Paymaster balance unchanged — no reimbursement occurred
-        uint256 paymasterBalanceAfter = paymaster.balance;
-        assertEq(paymasterBalanceAfter, paymasterBalanceBefore, "Paymaster balance should be unchanged");
     }
 }

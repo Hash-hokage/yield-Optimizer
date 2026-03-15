@@ -13,8 +13,6 @@ import {MockYieldFarm} from "../src/mocks/MockYieldFarm.sol";
 /// @dev Deploys Mock Tokens (USDC + TGT), a Mock AMM (Factory + DEX Router),
 ///      seeds initial liquidity, and deploys a MockYieldFarm.
 ///
-///      Run this script FIRST, then feed the output addresses into DeployCore.
-///
 ///      **Deployment Command (Somnia Testnet):**
 ///      ```bash
 ///      forge script script/DeployMocks.s.sol \
@@ -43,11 +41,10 @@ contract DeployMocks is Script {
         // ─────────────────────────────────────────────────
         //  1. Start broadcast (uses --account deployer keystore)
         // ─────────────────────────────────────────────────
-        vm.startBroadcast();
-
         address deployer = msg.sender;
         console.log("Deployer:            ", deployer);
         console.log("");
+        vm.startBroadcast(deployer);
 
         // ─────────────────────────────────────────────────
         //  2. Deploy Mock Tokens

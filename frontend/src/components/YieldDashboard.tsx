@@ -418,7 +418,7 @@ export default function YieldDashboard() {
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-zinc-500">Gas Fee</span>
                     <span className="text-emerald-400 font-medium">
-                      Gasless ✨
+                      ~0.001 STT
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-xs">

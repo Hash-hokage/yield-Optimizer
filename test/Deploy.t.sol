@@ -64,7 +64,6 @@ contract DeployTest is Test {
         vm.setEnv("USDC_ADDRESS", vm.toString(deployedUsdc));
         vm.setEnv("MOCK_FARM_ADDRESS", vm.toString(deployedMockFarm));
         vm.setEnv("ROUTER_ADDRESS", vm.toString(deployedMockDex));
-        vm.setEnv("PAYMASTER_ADDRESS", "0x1111111111111111111111111111111111111111");
 
         DeployCore deployCoreScript = new DeployCore();
         (deployedYieldRelayer, deployedYieldOptimizer) = deployCoreScript.run();

@@ -76,7 +76,7 @@ contract RetailMechanicsTest is Test {
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 6. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(address(usdc), paymaster, trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
+        optimizer = new YieldOptimizer(address(usdc), trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
 
         // --- 7. Configure optimizer ---
         optimizer.updateCachedReserves(DEX_RESERVE_USDC, DEX_RESERVE_TARGET);

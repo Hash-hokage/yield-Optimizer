@@ -1,4 +1,4 @@
-import { http, createConfig } from 'wagmi'
+import { getDefaultConfig } from '@rainbow-me/rainbowkit'
 import { defineChain } from 'viem'
 
 export const somniaTestnet = defineChain({
@@ -13,9 +13,9 @@ export const somniaTestnet = defineChain({
   },
 })
 
-export const config = createConfig({
+export const config = getDefaultConfig({
+  appName: 'Somnia Yield Optimizer',
+  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'PLACEHOLDER',
   chains: [somniaTestnet],
-  transports: {
-    [somniaTestnet.id]: http(),
-  },
+  ssr: true,
 })
