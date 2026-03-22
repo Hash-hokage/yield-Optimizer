@@ -49,7 +49,7 @@ export const publicClient = createPublicClient({
  * Placeholder contract addresses — update with deployed addresses.
  */
 export const CONTRACTS = {
-  YIELD_OPTIMIZER: "0x0000000000000000000000000000000000000000" as `0x${string}`,
-  YIELD_RELAYER: "0x0000000000000000000000000000000000000000" as `0x${string}`,
-  USDC: "0x0000000000000000000000000000000000000000" as `0x${string}`,
+  YIELD_OPTIMIZER: (process.env.NEXT_PUBLIC_YIELD_OPTIMIZER_ADDRESS || "0x00") as `0x${string}`,
+  YIELD_RELAYER: (process.env.NEXT_PUBLIC_YIELD_RELAYER_ADDRESS || "0x00") as `0x${string}`,
+  USDC: (process.env.NEXT_PUBLIC_USDC_ADDRESS || "0x00") as `0x${string}`,
 } as const;

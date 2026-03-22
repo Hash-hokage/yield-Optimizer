@@ -1,4 +1,5 @@
 import YieldDashboard from "@/components/YieldDashboard";
+import { DemoButton } from "@/components/DemoButton";
 
 export default function Home() {
   return (
@@ -16,6 +17,11 @@ export default function Home() {
 
       {/* Dashboard */}
       <YieldDashboard />
+
+      {/* ── God Mode: Demo Trigger for Hackathon Judges ── */}
+      <section className="mt-10 flex justify-center">
+        <DemoButton />
+      </section>
     </div>
   );
 }

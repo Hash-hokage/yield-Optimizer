@@ -8,11 +8,6 @@ export const yieldOptimizerABI = [
         "internalType": "address"
       },
       {
-        "name": "_paymaster",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "_trustedOracle",
         "type": "address",
         "internalType": "address"
@@ -29,23 +24,6 @@ export const yieldOptimizerABI = [
       }
     ],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "receive",
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "MAX_REIMBURSEMENT",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -203,19 +181,6 @@ export const yieldOptimizerABI = [
   {
     "type": "function",
     "name": "owner",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "paymaster",
     "inputs": [],
     "outputs": [
       {
@@ -538,11 +503,6 @@ export const yieldOptimizerABI = [
   {
     "type": "error",
     "name": "YieldOptimizer__Paused",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "YieldOptimizer__ReimbursementFailed",
     "inputs": []
   },
   {
