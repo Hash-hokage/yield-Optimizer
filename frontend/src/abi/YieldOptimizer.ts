@@ -46,32 +46,6 @@ export const yieldOptimizerABI = [
   },
   {
     "type": "function",
-    "name": "cachedReserveTarget",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "cachedReserveUSDC",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "cumulativeLoss",
     "inputs": [],
     "outputs": [
@@ -279,24 +253,6 @@ export const yieldOptimizerABI = [
     "type": "function",
     "name": "unpause",
     "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updateCachedReserves",
-    "inputs": [
-      {
-        "name": "_reserveUSDC",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "_reserveTarget",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },

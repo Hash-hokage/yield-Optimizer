@@ -38,7 +38,7 @@ contract YieldOptimizerHandler is Test {
     MockERC20 public targetToken;
     MockDEX public dex;
     MockYieldFarm public farm;
-    address public trustedOracle;
+    address public reactivityPrecompile;
 
     /// @dev Amount of USDC re-seeded into the optimizer between calls.
     uint256 private constant SEED_AMOUNT = 1_000_000e6;
@@ -56,14 +56,14 @@ contract YieldOptimizerHandler is Test {
         MockERC20 _targetToken,
         MockDEX _dex,
         MockYieldFarm _farm,
-        address _trustedOracle
+        address _reactivityPrecompile
     ) {
         optimizer = _optimizer;
         usdc = _usdc;
         targetToken = _targetToken;
         dex = _dex;
         farm = _farm;
-        trustedOracle = _trustedOracle;
+        reactivityPrecompile = _reactivityPrecompile;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -88,8 +88,8 @@ contract YieldOptimizerHandler is Test {
         // Use minimal gas price to maximise rebalance execution paths
         vm.txGasPrice(1 wei);
 
-        // Call the optimizer as the trusted oracle
-        vm.prank(trustedOracle);
+        // Call the optimizer as the reactivity precompile
+        vm.prank(reactivityPrecompile);
         try optimizer.onYieldUpdated(randomAPY, address(farm)) {} catch {}
         // --- Re-seed for next iteration ---
         // Mint fresh USDC into the optimizer so subsequent calls have capital
@@ -127,11 +127,12 @@ contract YieldOptimizerInvariantTest is Test {
     YieldOptimizerHandler public handler;
 
     address public paymaster;
-    address public trustedOracle;
+    address public yieldRelayer;
 
     /// @dev Constants matching YieldOptimizer internals.
     uint256 private constant BPS_DENOMINATOR = 10_000;
-    uint256 private constant FIXED_GAS_OVERHEAD = 50_000;
+    uint256 private constant HOLDING_PERIOD_DAYS = 30;
+    uint256 private constant DEFAULT_GAS_OVERHEAD = 3_000_000;
     uint256 private constant SAFETY_BUFFER_NUMERATOR = 11;
     uint256 private constant SAFETY_BUFFER_DENOMINATOR = 10;
 
@@ -140,6 +141,7 @@ contract YieldOptimizerInvariantTest is Test {
     uint256 private constant DEX_RESERVE_USDC = 1_000_000_000e6; // 1B USDC liquidity
     uint256 private constant DEX_RESERVE_TARGET = 1_000_000_000e6; // 1B TGT liquidity
     uint256 private constant MAX_LOSS_THRESHOLD = 1_000_000e6;
+    address private constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
 
     /*//////////////////////////////////////////////////////////////
                               SETUP
@@ -153,7 +155,7 @@ contract YieldOptimizerInvariantTest is Test {
 
         // --- 2. Deploy mock oracle ---
         oracle = new MockOracle();
-        trustedOracle = address(oracle);
+        yieldRelayer = address(oracle);
 
         // --- 3. Create paymaster ---
         paymaster = makeAddr("paymaster");
@@ -170,7 +172,7 @@ contract YieldOptimizerInvariantTest is Test {
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 7. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(address(usdc), trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
+        optimizer = new YieldOptimizer(address(usdc), yieldRelayer, address(dex), MAX_LOSS_THRESHOLD);
 
         // --- 8. Seed USDC into the optimizer ---
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
@@ -181,8 +183,7 @@ contract YieldOptimizerInvariantTest is Test {
         // --- 10. Pre-fund the DEX with target tokens ---
         targetToken.mint(address(dex), DEX_RESERVE_TARGET);
 
-        // --- 11. Set cached reserves on the optimizer (using new admin setter) ---
-        optimizer.updateCachedReserves(DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
+        // --- 11. Set cached reserves on the optimizer (removed) ---
 
         // --- 12. Whitelist the farm (Audit H-03) ---
         optimizer.setFarmAllowed(address(farm), true);
@@ -191,7 +192,7 @@ contract YieldOptimizerInvariantTest is Test {
         vm.deal(address(optimizer), 100 ether);
 
         // --- 14. Deploy the handler and scope the fuzzer ---
-        handler = new YieldOptimizerHandler(optimizer, usdc, targetToken, dex, farm, trustedOracle);
+        handler = new YieldOptimizerHandler(optimizer, usdc, targetToken, dex, farm, SOMNIA_REACTIVITY_PRECOMPILE);
 
         // Tell the invariant runner to ONLY call the handler
         targetContract(address(handler));
@@ -205,9 +206,9 @@ contract YieldOptimizerInvariantTest is Test {
     /// @dev Reproduces the exact arithmetic from `onYieldUpdated` (lines 220–241) with
     ///      extreme fuzzed inputs:
     ///
-    ///      1. `deltaY = (balance × randomAPY) / BPS_DENOMINATOR`
+    ///      1. `deltaY = (balance × randomAPY × HOLDING_PERIOD_DAYS) / (BPS_DENOMINATOR × 365)`
     ///      2. `slippage = (balance × balance) / randomSlippage`
-    ///      3. `gasCost = FIXED_GAS_OVERHEAD × tx.gasprice`
+    ///      3. `gasCost = DEFAULT_GAS_OVERHEAD × tx.gasprice`
     ///      4. `totalCostWithBuffer = ((gasCost + slippage) × 11) / 10`
     ///      5. Profitability gate: `deltaY > totalCostWithBuffer` → execute; else skip.
     ///
@@ -232,7 +233,7 @@ contract YieldOptimizerInvariantTest is Test {
 
         // --- Step 1: Yield delta (ΔY) ---
         // This MUST NOT overflow. balance (≤ 1e12) × randomAPY (≤ 2^128) fits in uint256.
-        uint256 deltaY = (balance * randomAPY) / BPS_DENOMINATOR;
+        uint256 deltaY = (balance * randomAPY * HOLDING_PERIOD_DAYS) / (BPS_DENOMINATOR * 365);
 
         // --- Step 2: Slippage estimate ---
         // balance² = (1e12)² = 1e24, well within uint256.
@@ -240,8 +241,8 @@ contract YieldOptimizerInvariantTest is Test {
         uint256 slippage = (balance * balance) / randomSlippage;
 
         // --- Step 3: Gas cost ---
-        // FIXED_GAS_OVERHEAD (50_000) × gasPrice (1e9) = 5e13, safe.
-        uint256 gasCost = FIXED_GAS_OVERHEAD * gasPrice;
+        // DEFAULT_GAS_OVERHEAD (3_000_000) × gasPrice (1e9) = 3e15, safe.
+        uint256 gasCost = DEFAULT_GAS_OVERHEAD * gasPrice;
 
         // --- Step 4: Total cost with safety buffer ---
         // (gasCost + slippage) ≤ (5e13 + 1e24) ≈ 1e24. Multiply by 11 → 1.1e25, safe.

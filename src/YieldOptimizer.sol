@@ -46,7 +46,7 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
     /// @dev Reverted when the contract is paused by the RiskGuard.
     error YieldOptimizer__Paused();
 
-    /// @dev Reverted when `msg.sender` is not the trusted oracle in a reactive callback.
+    /// @dev Reverted when `msg.sender` is not the reactivity precompile in a reactive callback.
     error YieldOptimizer__UnauthorizedCallback();
 
     /// @dev Reverted when a user tries to withdraw more shares than they hold.
@@ -59,12 +59,17 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
                      NETWORK ADDRESSES (IMMUTABLE)
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice The canonical Somnia Reactivity Precompile address.
+    /// @dev This is the address that msg.sender will equal when a reactive
+    ///      callback is invoked by the Somnia network after a subscribed event fires.
+    address public constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
+
     /// @notice The address of the USDC token used as the base denomination for all operations.
     address public immutable usdc;
 
-    /// @notice The address of the trusted oracle whose reactive events this optimizer subscribes to.
-    /// @dev Callbacks MUST verify `msg.sender` against this address to prevent spoofed yield updates.
-    address public immutable trustedOracle;
+    /// @notice The address of the yield relayer whose reactive events this optimizer subscribes to.
+    /// @dev The Somnia reactivity runtime will automatically invoke onYieldUpdated when this relayer emits YieldUpdated.
+    address public immutable yieldRelayer;
 
     /// @notice The Uniswap V2-style DEX router used for token swaps during rebalances.
     IDEXRouter public immutable router;
@@ -110,25 +115,28 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
     uint256 public totalOptimizerShares;
 
     /*//////////////////////////////////////////////////////////////
-                         REACTIVITY CACHE
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Cached USDC reserve from the latest DEX pool snapshot.
-    /// @dev Used to pre-compute slippage estimates without an external call during callbacks.
-    uint256 public cachedReserveUSDC;
-
-    /// @notice Cached target-token reserve from the latest DEX pool snapshot.
-    /// @dev Paired with `cachedReserveUSDC` for constant-product slippage calculations.
-    uint256 public cachedReserveTarget;
-
-    /*//////////////////////////////////////////////////////////////
                        ACCOUNTING CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Fixed gas overhead estimate used in profit-vs-gas accounting.
-    /// @dev Accounts for base transaction costs, calldata, and storage operations that
-    ///      are not captured by `gasleft()` measurements within the execution flow.
-    uint256 private constant FIXED_GAS_OVERHEAD = 50000;
+    /// @notice The minimum number of days funds must remain in a farm for a
+    ///         rebalance to be considered economically worthwhile.
+    /// @dev    Used to normalize the annual APY into a per-period yield estimate
+    ///         before comparing against the one-time gas cost of a rebalance.
+    ///         At 30 days, the optimizer asks: "Will 30 days of yield in the new
+    ///         farm exceed the gas cost of moving there?"
+    uint256 private constant HOLDING_PERIOD_DAYS = 30;
+
+    /// @notice Estimated gas overhead for a full rebalance operation on Somnia.
+    /// @dev    Somnia's gas model differs significantly from Ethereum mainnet:
+    ///           - Cold SLOAD: ~1,000,000 gas (vs ~2,100 on Ethereum, ~476× more)
+    ///           - LOG opcodes: ~13× Ethereum cost
+    ///         A single `onYieldUpdated` execution involves 6+ cold SLOADs,
+    ///         a DEX swap (cross-contract), and a farm deposit (cross-contract).
+    ///         The default of 3_000_000 aligns with the subscription gasLimit
+    ///         recommendation in the contract's architecture notes.
+    ///         The owner can tune this value post-deployment via `setGasOverheadEstimate`
+    ///         once real execution data is available from Somnia testnet.
+    uint256 public gasOverheadEstimate = 3_000_000;
 
     /// @dev Basis-points denominator (10 000 = 100%).
     uint256 private constant BPS_DENOMINATOR = 10_000;
@@ -145,6 +153,11 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                               EVENTS
     //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emitted when the owner updates the gas overhead estimate.
+    /// @param oldEstimate The previous gas overhead estimate.
+    /// @param newEstimate The new gas overhead estimate.
+    event GasOverheadUpdated(uint256 oldEstimate, uint256 newEstimate);
 
     /// @notice Emitted after a successful rebalance execution.
     /// @param targetFarm The address of the yield farm that received the rebalanced funds.
@@ -184,14 +197,14 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
 
     /// @notice Deploys the Yield Optimizer with the required network addresses and risk parameters.
     /// @param _usdc The address of the USDC token contract.
-    /// @param _trustedOracle The address of the oracle whose `YieldUpdated` events are trusted.
+    /// @param _yieldRelayer The address of the relayer whose `YieldUpdated` events are trusted.
     /// @param _router The Uniswap V2-style DEX router for executing swaps.
     /// @param _maxLossThreshold The maximum cumulative loss (in USDC) before RiskGuard pauses operations.
-    constructor(address _usdc, address _trustedOracle, address _router, uint256 _maxLossThreshold)
+    constructor(address _usdc, address _yieldRelayer, address _router, uint256 _maxLossThreshold)
         Ownable(msg.sender)
     {
         usdc = _usdc;
-        trustedOracle = _trustedOracle;
+        yieldRelayer = _yieldRelayer;
         router = IDEXRouter(_router);
 
         maxLossThreshold = _maxLossThreshold;
@@ -275,12 +288,24 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
                        REACTIVE CALLBACK
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Reactive callback invoked by the trusted oracle when a yield rate changes.
+    /// @notice Reactive callback invoked automatically by the Somnia reactivity precompile
+    ///         (0x0000000000000000000000000000000000000100) when the subscribed YieldRelayer
+    ///         emits a `YieldUpdated(uint256,address)` event.
+    /// @dev Call chain:
+    ///        1. Off-chain Keeper calls `YieldRelayer.pushYieldUpdate(apy, farm)`
+    ///        2. YieldRelayer emits `YieldUpdated(apy, farm)`
+    ///        3. Somnia's reactivity precompile detects the event (because YieldOptimizer
+    ///           subscribed via `ISomniaReactivity.subscribe` in the deploy script)
+    ///        4. Precompile calls this function with msg.sender == SOMNIA_REACTIVITY_PRECOMPILE
+    ///      SECURITY: msg.sender is checked against SOMNIA_REACTIVITY_PRECOMPILE.
+    ///      Any direct call from a non-precompile address will revert.
+    ///      The profitability check normalizes the annualized newAPY into a HOLDING_PERIOD_DAYS-period yield before comparing it against the one-time gas + slippage cost of rebalancing. A rebalance is only executed if the expected yield over the holding period exceeds total costs with a 1.1× safety buffer.
     /// @param newAPY The updated annual percentage yield in basis points (e.g. 500 = 5.00%).
     /// @param targetFarm The address of the yield farm to rebalance into.
     function onYieldUpdated(uint256 newAPY, address targetFarm) external {
-        // --- 1. Access control: only the trusted oracle may call this ---
-        if (msg.sender != trustedOracle) {
+        // --- 1. Access control: only the Somnia reactivity precompile may call this ---
+        // The YieldRelayer emits the event; Somnia routes it; the precompile calls this function.
+        if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) {
             revert YieldOptimizer__UnauthorizedCallback();
         }
 
@@ -294,14 +319,17 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
         uint256 portfolioBefore = _getPortfolioValue();
 
         // --- 5. Profitability math ---
-        uint256 deltaY = (portfolioBefore * newAPY) / BPS_DENOMINATOR;
+        // Normalize annual APY to a per-period yield estimate.
+        // Formula: portfolioBefore * newAPY / BPS_DENOMINATOR / (365 / HOLDING_PERIOD_DAYS)
+        // Simplified to avoid integer division precision loss:
+        // = portfolioBefore * newAPY * HOLDING_PERIOD_DAYS / (BPS_DENOMINATOR * 365)
+        uint256 deltaY = (portfolioBefore * newAPY * HOLDING_PERIOD_DAYS) / (BPS_DENOMINATOR * 365);
 
-        uint256 slippage = 0;
-        if (cachedReserveUSDC > 0) {
-            slippage = (portfolioBefore * portfolioBefore) / cachedReserveUSDC;
-        }
+        // Estimate live slippage using current on-chain pool prices
+        address targetAsset = IYieldFarm(targetFarm).asset();
+        uint256 slippage = _estimateLiveSlippage(portfolioBefore, targetAsset);
 
-        uint256 estimatedGasCost = FIXED_GAS_OVERHEAD * tx.gasprice;
+        uint256 estimatedGasCost = gasOverheadEstimate * tx.gasprice;
         uint256 gasCostUSDC = (estimatedGasCost * ETH_PRICE_USDC) / 1e18;
 
         uint256 totalCostWithBuffer = ((gasCostUSDC + slippage) * SAFETY_BUFFER_NUMERATOR) / SAFETY_BUFFER_DENOMINATOR;
@@ -312,11 +340,16 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
         }
 
         // --- 6. Execute the rebalance ---
-        _executeRebalance(targetFarm);
+        // Capture gas remaining before rebalance execution for accurate gas accounting
+        uint256 gasAtStart = gasleft();
+        (uint256 profitUSDC, uint256 gasUsed, , uint256 portfolioAfter) = _executeRebalance(targetFarm, portfolioBefore);
+
+        // Account for gas used outside _executeRebalance (the profitability check itself)
+        uint256 totalGasUsed = gasUsed + (gasAtStart - gasleft());
+
+        emit OptimizerExecuted(targetFarm, profitUSDC, totalGasUsed);
 
         // --- 7. RiskGuard: check for losses using full portfolio value (Audit M-04 fix) ---
-        uint256 portfolioAfter = _getPortfolioValue();
-
         if (portfolioAfter < portfolioBefore) {
             uint256 loss = portfolioBefore - portfolioAfter;
             cumulativeLoss += loss;
@@ -333,7 +366,11 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// @param targetFarm The yield farm to rebalance funds into.
-    function _executeRebalance(address targetFarm) internal {
+    function _executeRebalance(address targetFarm, uint256 portfolioBefore)
+        internal
+        returns (uint256 profitUSDC, uint256 gasUsed, uint256 gasAtExecStart, uint256 portfolioAfter)
+    {
+        gasAtExecStart = gasleft();
         // --- 1. Withdraw from current farm if funds are deployed ---
         address currentAsset;
         uint256 swapAmount;
@@ -414,8 +451,13 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
         // --- 5. Update state ---
         currentFarm = targetFarm;
 
-        // --- 6. Emit event ---
-        emit OptimizerExecuted(targetFarm, receivedAmount, 0);
+        // Emit is handled by the caller (onYieldUpdated) once gas and profit are known
+        // Compute gas used by this execution
+        gasUsed = gasAtExecStart - gasleft();
+
+        // Compute net profit: portfolio value after deployment vs before
+        portfolioAfter = _getPortfolioValue();
+        profitUSDC = portfolioAfter > portfolioBefore ? portfolioAfter - portfolioBefore : 0;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -435,17 +477,79 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
         return usdcBalance;
     }
 
+    /// @notice Estimates the slippage cost (in USDC) of swapping `amount` of USDC
+    ///         through the DEX at current live pool prices.
+    /// @dev    Calls router.getAmountsOut with a two-token path [usdc → targetAsset].
+    ///         Slippage is expressed as the difference between the ideal output
+    ///         (if price impact were zero) and the actual quoted output, converted back
+    ///         to USDC terms using the quoted rate.
+    ///         Returns 0 if the router or path cannot be queried (e.g. no pool exists).
+    /// @param  amount     The USDC amount to estimate slippage for.
+    /// @param  targetAsset The token address of the farm's underlying asset.
+    /// @return slippageUSDC The estimated slippage cost in USDC (6 decimals).
+    function _estimateLiveSlippage(uint256 amount, address targetAsset)
+        internal
+        view
+        returns (uint256 slippageUSDC)
+    {
+        if (amount == 0 || targetAsset == usdc) {
+            return 0;
+        }
+
+        address[] memory path = new address[](2);
+        path[0] = usdc;
+        path[1] = targetAsset;
+
+        try router.getAmountsOut(amount, path) returns (uint256[] memory amounts) {
+            if (amounts.length < 2 || amounts[1] == 0) return 0;
+
+            // Ideal output if there were zero price impact:
+            // idealOut = amount (since we're moving USDC→asset→USDC conceptually,
+            // the round-trip cost approximates 2× one-way fee+impact).
+            // Simpler: compare quoted output to a "perfect" output assuming spot price.
+            // We use the quoted rate to back-compute USDC equivalent of output,
+            // then take the difference from the input amount.
+
+            // quotedRate: how many targetAsset tokens per USDC (scaled to 1e6)
+            // priceImpact is implicitly captured in amounts[1] vs spot.
+
+            // For a simple estimate: slippage ≈ amountIn - (amountOut_in_usdc)
+            // We re-quote the reverse to get USDC back:
+            address[] memory reversePath = new address[](2);
+            reversePath[0] = targetAsset;
+            reversePath[1] = usdc;
+
+            try router.getAmountsOut(amounts[1], reversePath) returns (uint256[] memory reverseAmounts) {
+                if (reverseAmounts.length < 2) return 0;
+                uint256 roundTripUSDC = reverseAmounts[1];
+                if (amount > roundTripUSDC) {
+                    slippageUSDC = amount - roundTripUSDC;
+                }
+            } catch {
+                return 0;
+            }
+        } catch {
+            return 0;
+        }
+    }
+
     /*//////////////////////////////////////////////////////////////
                      ADMIN — CONFIGURATION (C-02, H-03)
     //////////////////////////////////////////////////////////////*/
 
-    function setFarmAllowed(address farm, bool allowed) external onlyOwner {
-        allowedFarms[farm] = allowed;
+    /// @notice Updates the gas overhead estimate used in rebalance profitability checks.
+    /// @dev    Tune this value based on observed gas usage from Somnia testnet execution data.
+    ///         Setting too low will allow unprofitable rebalances.
+    ///         Setting too high will suppress profitable rebalances.
+    /// @param _newEstimate New gas overhead in gas units (not wei). Typical range: 1_000_000–10_000_000.
+    function setGasOverheadEstimate(uint256 _newEstimate) external onlyOwner {
+        require(_newEstimate > 0, "YieldOptimizer: gas estimate must be > 0");
+        emit GasOverheadUpdated(gasOverheadEstimate, _newEstimate);
+        gasOverheadEstimate = _newEstimate;
     }
 
-    function updateCachedReserves(uint256 _reserveUSDC, uint256 _reserveTarget) external onlyOwner {
-        cachedReserveUSDC = _reserveUSDC;
-        cachedReserveTarget = _reserveTarget;
+    function setFarmAllowed(address farm, bool allowed) external onlyOwner {
+        allowedFarms[farm] = allowed;
     }
 
     /*//////////////////////////////////////////////////////////////

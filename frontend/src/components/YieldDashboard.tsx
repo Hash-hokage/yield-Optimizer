@@ -7,7 +7,6 @@ import {
   TrendingUp,
   DollarSign,
   ShieldCheck,
-  ChevronDown,
   Sparkles,
   ArrowRight,
 } from "lucide-react";
@@ -102,27 +101,21 @@ function StatRow({
 }
 
 /* ─────────────────────────────────────────
-   Mock farms for dropdown
+   Helper
    ───────────────────────────────────────── */
-const SOMNIA_FARMS = [
-  { id: "farm-1", name: "STT-USDC LP Vault", apy: "12.4%" },
-  { id: "farm-2", name: "STT Staking Pool", apy: "8.2%" },
-  { id: "farm-3", name: "Somnia Blue Chip Index", apy: "15.7%" },
-  { id: "farm-4", name: "STT-ETH Reactor", apy: "22.1%" },
-];
+function shortenAddress(addr: string): string {
+  if (!addr || addr === '0x0000000000000000000000000000000000000000') return 'None'
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`
+}
 
 /* ═════════════════════════════════════════
    Main Dashboard Component
    ═════════════════════════════════════════ */
 export default function YieldDashboard() {
-  const optimizer = useYieldOptimizer();
+  const { cumulativeLoss, maxLossThreshold, isPaused, tvl, currentFarm, ...optimizer } = useYieldOptimizer();
   const isLoggedIn = !!optimizer.address;
 
   const [amount, setAmount] = useState("");
-  const [selectedFarm, setSelectedFarm] = useState(SOMNIA_FARMS[0].id);
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-
-  const selectedFarmData = SOMNIA_FARMS.find((f) => f.id === selectedFarm)!;
 
   // Real-time parsed formatted values
   const displayUsdc = optimizer.usdcBalance ? formatUnits(optimizer.usdcBalance as bigint, 6) : "0";
@@ -186,9 +179,13 @@ export default function YieldDashboard() {
               >
                 <StatRow
                   icon={Activity}
-                  label="Active Farm"
-                  value={selectedFarmData.name}
-                  isLoading={false}
+                  label="Active Farm (On-Chain)"
+                  value={
+                    currentFarm && currentFarm !== '0x0000000000000000000000000000000000000000'
+                      ? shortenAddress(currentFarm as string)
+                      : 'No farm deployed'
+                  }
+                  isLoading={currentFarm === undefined}
                   accent="text-cyan-400"
                 />
                 <StatRow
@@ -202,8 +199,8 @@ export default function YieldDashboard() {
                 <StatRow
                   icon={DollarSign}
                   label="Total Value Optimized"
-                  value={`$1,420,690`} // Mock TVL
-                  isLoading={false}
+                  value={`$${Number(formatUnits((tvl as bigint) ?? BigInt(0), 6)).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+                  isLoading={tvl === undefined}
                   accent="text-violet-400"
                 />
               </motion.div>
@@ -222,9 +219,13 @@ export default function YieldDashboard() {
                     animate={{ scale: 1, opacity: 1 }}
                     transition={{ delay: 0.3 }}
                   >
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400 ring-1 ring-emerald-500/20">
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${
+                      isPaused
+                        ? 'bg-red-500/10 text-red-400 ring-red-500/20'
+                        : 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/20'
+                    }`}>
                       <ShieldCheck className="h-3 w-3" />
-                      Active
+                      {isPaused ? 'Paused' : 'Active'}
                     </span>
                   </motion.div>
               </div>
@@ -234,13 +235,13 @@ export default function YieldDashboard() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-zinc-500">Cumulative Loss</span>
                   <span className="text-zinc-300 font-mono tabular-nums">
-                    $0.00
+                    ${Number(formatUnits((cumulativeLoss as bigint) ?? BigInt(0), 6)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-zinc-500">Max Threshold</span>
                   <span className="text-zinc-300 font-mono tabular-nums">
-                    $100,000
+                    ${Number(formatUnits((maxLossThreshold as bigint) ?? BigInt(0), 6)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 {/* Progress bar */}
@@ -253,7 +254,11 @@ export default function YieldDashboard() {
                     <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
                       <div
                         className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-700"
-                        style={{ width: `0%` }}
+                        style={{
+                          width: maxLossThreshold && cumulativeLoss
+                            ? `${Math.min(100, Number((cumulativeLoss as bigint) * BigInt(100) / (maxLossThreshold as bigint)))}%`
+                            : '0%'
+                        }}
                       />
                     </div>
                   </motion.div>
@@ -336,72 +341,23 @@ export default function YieldDashboard() {
                 </div>
               </div>
 
-              {/* ── Farm Selector ── */}
-              <div className="space-y-2">
-                <label className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-                  Target Somnia Farm
-                </label>
-                <div className="relative">
-                  <button
-                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                    className="w-full h-14 rounded-xl border border-zinc-800/60 bg-zinc-900/80 px-4 flex items-center justify-between hover:border-zinc-700/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 transition-all duration-200"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 flex items-center justify-center ring-1 ring-emerald-500/20">
-                        <TrendingUp className="h-4 w-4 text-emerald-400" />
-                      </div>
-                      <div className="text-left">
-                        <div className="text-sm font-medium text-zinc-100">
-                          {selectedFarmData.name}
-                        </div>
-                        <div className="text-xs text-emerald-400">
-                          APY {selectedFarmData.apy}
-                        </div>
-                      </div>
-                    </div>
-                    <ChevronDown
-                      className={`h-4 w-4 text-zinc-500 transition-transform duration-200 ${
-                        isDropdownOpen ? "rotate-180" : ""
-                      }`}
-                    />
-                  </button>
-
-                  {/* Dropdown */}
-                  {isDropdownOpen && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ duration: 0.15 }}
-                      className="absolute top-full left-0 right-0 mt-2 z-50 rounded-xl border border-zinc-800/60 bg-zinc-900/95 backdrop-blur-xl shadow-2xl shadow-black/40 overflow-hidden"
-                    >
-                      {SOMNIA_FARMS.map((farm) => (
-                        <button
-                          key={farm.id}
-                          onClick={() => {
-                            setSelectedFarm(farm.id);
-                            setIsDropdownOpen(false);
-                          }}
-                          className={`w-full px-4 py-3 flex items-center justify-between hover:bg-zinc-800/50 transition-colors ${
-                            selectedFarm === farm.id ? "bg-zinc-800/30" : ""
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="h-7 w-7 rounded-md bg-gradient-to-br from-emerald-500/15 to-cyan-500/15 flex items-center justify-center">
-                              <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-                            </div>
-                            <span className="text-sm text-zinc-200">
-                              {farm.name}
-                            </span>
-                          </div>
-                          <span className="text-xs font-medium text-emerald-400 font-mono">
-                            {farm.apy}
-                          </span>
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
-                </div>
+              {/* ── Farm Routing Info ── */}
+              <div className="rounded-xl bg-zinc-800/20 border border-zinc-700/30 p-4 space-y-2">
+                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                  How farm routing works
+                </p>
+                <p className="text-xs text-zinc-500 leading-relaxed">
+                  The Somnia Yield Optimizer automatically selects the highest-yielding farm.
+                  When the on-chain Keeper detects a better APY, it triggers a <span className="text-emerald-400">YieldUpdated</span> event.
+                  Somnia&apos;s reactive precompile catches it and rebalances your capital — no user action needed.
+                </p>
+                <p className="text-xs text-zinc-600">
+                  Current target: <span className="font-mono text-zinc-400">
+                    {currentFarm && currentFarm !== '0x0000000000000000000000000000000000000000'
+                      ? currentFarm as string
+                      : 'Awaiting first rebalance trigger'}
+                  </span>
+                </p>
               </div>
 
               {/* ── Summary Row ── */}
@@ -419,12 +375,6 @@ export default function YieldDashboard() {
                     <span className="text-zinc-500">Gas Fee</span>
                     <span className="text-emerald-400 font-medium">
                       ~0.001 STT
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-zinc-500">Target APY</span>
-                    <span className="text-zinc-300 font-mono">
-                      {selectedFarmData.apy}
                     </span>
                   </div>
                 </motion.div>
@@ -464,18 +414,7 @@ export default function YieldDashboard() {
                   size="sm"
                   className="w-full text-xs"
                   disabled={optimizer.isMinting || !isLoggedIn}
-                  onClick={async (e) => {
-                    e.preventDefault(); // Prevent any default HTML form submission behavior
-                    console.log("🚨 TRACER BULLET: The physical click was detected by React!");
-                    console.log("🚨 Is the mint hook defined?", !!optimizer.handleMintTestUSDC);
-                    try {
-                      console.log("🚨 Attempting Wagmi transaction...");
-                      await optimizer.handleMintTestUSDC(parseUnits("1000", 6));
-                      console.log("🚨 Transaction sent to wallet.");
-                    } catch (error) {
-                      console.error("🚨 WAGMI ERROR CAUGHT:", error);
-                    }
-                  }}
+                  onClick={() => optimizer.handleMintTestUSDC(parseUnits("1000", 6))}
                 >
                   {optimizer.isMinting ? "Minting..." : "💧 Faucet 1k USDC"}
                 </Button>

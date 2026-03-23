@@ -236,45 +236,20 @@ interface ISomniaReactivity {
 
 ---
 
-## Off-Chain Keeper
+## Keeper Architecture
 
-The `keeper/` directory contains a Node.js service that acts as the data bridge between off-chain APY sources and on-chain contracts.
+The protocol has two keeper modes. Use only one at a time.
 
-### How It Works
+### Mode 1: Standalone Keeper (`keeper-standalone/`)
+An always-on Node.js process that polls APY every 60 seconds and pushes
+updates on-chain automatically. Deploy on Render or Railway for production-style demos.
 
-```
-┌──────────────────────────────────────────────────────┐
-│                     keeper/index.js                   │
-│                                                      │
-│   Engine 1: Express Health Server (port 3000)        │
-│   └─ GET / → { status: "ok", uptime: ... }          │
-│                                                      │
-│   Engine 2: Blockchain Polling Loop (every 60s)      │
-│   ├─ 1. fetchSimulatedAPY()  → random 300-800 bps   │
-│   ├─ 2. Check deviation from last pushed value       │
-│   ├─ 3. If deviation > 200 bps (2%):                │
-│   │      └─ relayer.pushYieldUpdate(newAPY, farm)    │
-│   └─ 4. Wait for tx confirmation                    │
-└──────────────────────────────────────────────────────┘
-```
+### Mode 2: God Mode (Next.js API — `frontend/src/app/api/trigger-rebalance/`)
+A manual trigger embedded in the frontend. Press "Simulate APY Spike" in the dashboard
+to instantly push a random 15%–25% APY on-chain. Designed for hackathon judge demos.
 
-**Key behaviour:**
-- **Polling interval:** 60 seconds
-- **Deviation threshold:** 200 basis points (2%) — prevents spamming the chain with insignificant updates
-- **Error recovery:** Full `try/catch` wraps each tick so transient RPC errors don't crash the process
-- **Tx confirmation:** Waits for on-chain confirmation before updating local state, ensuring consistency
-
-> **Production note:** The `fetchSimulatedAPY()` function currently returns random data for testnet demonstration. In production, this would query DeFi aggregator APIs (e.g., DefiLlama, Zapper) for live yield data.
-
-### Environment Variables
-
-```bash
-KEEPER_PRIVATE_KEY=0x...        # Keeper EOA private key
-RELAYER_CONTRACT_ADDRESS=0x...  # Deployed YieldRelayer address
-TARGET_FARM_ADDRESS=0x...       # Target farm/vault address
-SOMNIA_RPC_URL=https://api.infra.testnet.somnia.network
-PORT=3000                       # Health server port (optional)
-```
+Both keepers call `YieldRelayer.pushYieldUpdate()`. The relayer emits `YieldUpdated`,
+which Somnia's reactivity precompile routes to `YieldOptimizer.onYieldUpdated()`.
 
 ---
 
@@ -301,7 +276,7 @@ Somnia's gas model diverges significantly from Ethereum. These differences direc
 ### Impact on This Project
 
 The `onYieldUpdated` callback is classified as a **complex handler** because it:
-- Performs **multiple cold storage reads** (`cachedReserveUSDC`, `isPaused`, `cumulativeLoss`, `maxLossThreshold`)
+- Performs **multiple cold storage reads** (`isPaused`, `cumulativeLoss`, `maxLossThreshold`)
 - Executes **cross-contract calls** (DEX router swap, vault deposit/withdraw)
 - Emits events (`OptimizerExecuted`, `RiskGuardTripped`)
 
@@ -310,9 +285,8 @@ This means the reactive subscription backing this callback must be configured wi
 ### Design Mitigations
 
 1. **Storage packing** — `owner` (address, 20 bytes) and `isPaused` (bool, 1 byte) share a single storage slot, reducing cold reads from 2 to 1.
-2. **Cached reserves** — `cachedReserveUSDC` and `cachedReserveTarget` avoid repeated external calls to the DEX pool.
-3. **Graceful returns** — Non-profitable callbacks return early without emitting events, saving gas on `LOG` opcodes.
-4. **Exact approvals** — `SafeERC20.forceApprove()` sets the precise amount needed for each swap, avoiding unnecessary storage writes.
+2. **Graceful returns** — Non-profitable callbacks return early without emitting events, saving gas on `LOG` opcodes.
+3. **Exact approvals** — `SafeERC20.forceApprove()` sets the precise amount needed for each swap, avoiding unnecessary storage writes.
 
 ---
 
@@ -405,7 +379,6 @@ Only the `Ownable` owner of the `YieldRelayer` can call `pushYieldUpdate`, preve
 | `resetCumulativeLoss()` | Zero the loss counter after root cause is addressed |
 | `emergencyWithdraw(token, amount)` | Rescue stuck ERC-20 tokens |
 | `emergencyWithdrawETH()` | Drain ETH in an emergency |
-| `updateCachedReserves(usdc, target)` | Refresh cached reserves for profitability math |
 
 All admin functions are gated by OpenZeppelin's `Ownable` (replacing the previous custom `owner` + `onlyOwner` pattern).
 

@@ -1,3 +1,11 @@
+/**
+ * ============================================================
+ * DIFFERENCE NOTE:
+ * Unlike keeper, this implementation queries the YieldRelayer contract 
+ * directly using `currentFarmYields` to calculate deviation, rather than 
+ * relying on a local cache. It also uses node-cron instead of setInterval.
+ * ============================================================
+ */
 require('dotenv').config();
 const { ethers } = require('ethers');
 const cron = require('node-cron');

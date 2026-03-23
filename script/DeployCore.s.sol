@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Script, console} from "forge-std/Script.sol";
 import {YieldRelayer} from "../src/YieldRelayer.sol";
 import {YieldOptimizer} from "../src/YieldOptimizer.sol";
+import {ISomniaReactivity} from "../src/interfaces/ISomniaReactivity.sol";
 
 /// @title DeployCore — The Application
 /// @author Hash-Hokage
@@ -87,7 +88,7 @@ contract DeployCore is Script {
         // ─────────────────────────────────────────────────
         YieldOptimizer yieldOptimizer = new YieldOptimizer(
             usdcAddress,
-            address(yieldRelayer), // trustedOracle
+            address(yieldRelayer), // yieldRelayer
             routerAddress,
             MAX_LOSS_THRESHOLD
         );
@@ -97,11 +98,19 @@ contract DeployCore is Script {
         //  5. Somnia Reactivity Subscription
         // ─────────────────────────────────────────────────
         console.log("");
-        console.log("--- Reactivity Subscription ---");
-        console.log("YieldOptimizer verifies msg.sender == YieldRelayer.");
-        console.log("Please use the @somnia-chain/reactivity TypeScript SDK");
-        console.log("in your Node.js Keeper to watch YieldUpdated events and");
-        console.log("push them directly to YieldOptimizer.onYieldUpdated().");
+        console.log("--- Subscribing YieldOptimizer to YieldRelayer events ---");
+
+        // The optimizer must subscribe to the YieldUpdated event from the relayer.
+        // Once subscribed, Somnia's precompile will call yieldOptimizer.onYieldUpdated()
+        // automatically whenever yieldRelayer emits YieldUpdated.
+        ISomniaReactivity reactivityPrecompile = ISomniaReactivity(REACTIVITY_PRECOMPILE);
+
+        reactivityPrecompile.subscribe(
+            address(yieldRelayer),
+            keccak256("YieldUpdated(uint256,address)")
+        );
+
+        console.log("[SUBSCRIBED] YieldOptimizer listening to YieldRelayer.YieldUpdated");
 
         // ─────────────────────────────────────────────────
         //  6. Stop broadcast

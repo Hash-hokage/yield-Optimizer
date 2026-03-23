@@ -35,8 +35,10 @@ contract YieldRelayer is Ownable {
     //  State
     // ──────────────────────────────────────────────
 
-    /// @notice Maps each farm address to its most recently relayed APY value.
-    /// @dev Values are expected to be scaled by 1e18 (e.g., 5 % = 5e16).
+    /// @dev APY values are expressed in basis points (bps).
+    ///      100 bps = 1%. Examples: 500 = 5.00% APY, 1500 = 15.00% APY.
+    ///      Maximum accepted value is 10_000 bps (100% APY).
+    ///      This unit matches the BPS_DENOMINATOR = 10_000 used in YieldOptimizer.onYieldUpdated.
     mapping(address => uint256) public currentFarmYields;
 
     // ──────────────────────────────────────────────
@@ -59,9 +61,12 @@ contract YieldRelayer is Ownable {
     ///      Updates the `currentFarmYields` mapping and emits a `YieldUpdated`
     ///      event that Somnia's reactive nodes will pick up to trigger
     ///      downstream rebalancing logic in consumer contracts.
-    /// @param _newAPY     The latest computed APY for the target farm (1e18 scaled).
+    /// @param _newAPY The latest APY for the target farm expressed in basis points.
+    ///                100 bps = 1%. Valid range: 1–10000. Example: 500 = 5.00% APY.
     /// @param _targetFarm The address of the farm / vault to update.
     function pushYieldUpdate(uint256 _newAPY, address _targetFarm) external onlyOwner {
+        require(_newAPY > 0, "YieldRelayer: APY must be greater than zero");
+        require(_newAPY <= 10_000, "YieldRelayer: APY cannot exceed 10000 bps (100%)");
         currentFarmYields[_targetFarm] = _newAPY;
         emit YieldUpdated(_newAPY, _targetFarm);
     }

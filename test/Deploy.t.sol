@@ -106,7 +106,7 @@ contract DeployTest is Test {
         YieldOptimizer optimizer = YieldOptimizer(payable(deployedYieldOptimizer));
 
         assertEq(optimizer.usdc(), deployedUsdc, "Optimizer usdc() mismatch");
-        assertEq(optimizer.trustedOracle(), deployedYieldRelayer, "Optimizer trustedOracle() should be YieldRelayer");
+        assertEq(optimizer.yieldRelayer(), deployedYieldRelayer, "Optimizer yieldRelayer() should be YieldRelayer");
         assertEq(address(optimizer.router()), deployedMockDex, "Optimizer router() mismatch");
     }
 

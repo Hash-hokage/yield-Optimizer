@@ -32,7 +32,7 @@ contract RetailMechanicsTest is Test {
     MockUniswapV2Factory public factory;
 
     address public paymaster;
-    address public trustedOracle;
+    address public yieldRelayer;
 
     address public alice = makeAddr("alice");
     address public bob = makeAddr("bob");
@@ -59,7 +59,7 @@ contract RetailMechanicsTest is Test {
 
         // --- 2. Deploy mock oracle ---
         oracle = new MockOracle();
-        trustedOracle = address(oracle);
+        yieldRelayer = address(oracle);
 
         // --- 3. Paymaster ---
         paymaster = makeAddr("paymaster");
@@ -76,10 +76,9 @@ contract RetailMechanicsTest is Test {
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 6. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(address(usdc), trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
+        optimizer = new YieldOptimizer(address(usdc), yieldRelayer, address(dex), MAX_LOSS_THRESHOLD);
 
         // --- 7. Configure optimizer ---
-        optimizer.updateCachedReserves(DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
         optimizer.setFarmAllowed(address(farm), true);
         vm.deal(address(optimizer), 10 ether);
 

@@ -1,4 +1,4 @@
-import { useReadContract, useWriteContract, useAccount } from 'wagmi'
+import { useReadContract, useWriteContract, useAccount, usePublicClient } from 'wagmi'
 import { yieldOptimizerABI } from '@/abi/YieldOptimizer'
 import { mockERC20ABI } from '@/abi/MockERC20'
 import { Address } from 'viem'
@@ -8,6 +8,7 @@ const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_ADDRESS as Address
 
 export function useYieldOptimizer() {
   const { address } = useAccount()
+  const publicClient = usePublicClient()
 
   // --- READS ---
 
@@ -41,6 +42,38 @@ export function useYieldOptimizer() {
     functionName: 'totalOptimizerShares',
   })
 
+  const { data: cumulativeLoss, refetch: refetchCumulativeLoss } = useReadContract({
+    address: OPTIMIZER_ADDRESS,
+    abi: yieldOptimizerABI,
+    functionName: 'cumulativeLoss',
+    query: { refetchInterval: 10_000 }, // poll every 10 seconds
+  })
+
+  const { data: maxLossThreshold, refetch: refetchMaxLossThreshold } = useReadContract({
+    address: OPTIMIZER_ADDRESS,
+    abi: yieldOptimizerABI,
+    functionName: 'maxLossThreshold',
+  })
+
+  const { data: isPaused } = useReadContract({
+    address: OPTIMIZER_ADDRESS,
+    abi: yieldOptimizerABI,
+    functionName: 'isPaused',
+    query: { refetchInterval: 10_000 },
+  })
+
+  const { data: currentFarm, refetch: refetchCurrentFarm } = useReadContract({
+    address: OPTIMIZER_ADDRESS,
+    abi: yieldOptimizerABI,
+    functionName: 'currentFarm',
+    query: { refetchInterval: 8_000 },
+  })
+
+  // TVL = totalOptimizerShares × (portfolioValue / totalShares)
+  // Simplified: if all shares represent USDC at 1:1 on first deposit,
+  // TVL ≈ totalOptimizerShares as a USDC amount (6 decimals)
+  const tvl = totalOptimizerShares ?? BigInt(0)
+
   // --- WRITES ---
 
   const { writeContractAsync: mintTestUSDC, isPending: isMinting } = useWriteContract()
@@ -51,49 +84,56 @@ export function useYieldOptimizer() {
   // --- WRAPPER FUNCTIONS ---
 
   const handleMintTestUSDC = async (amount: bigint) => {
-    if (!address) return
-    await mintTestUSDC({
+    if (!address || !publicClient) return
+    const hash = await mintTestUSDC({
       address: USDC_ADDRESS,
       abi: mockERC20ABI,
       functionName: 'mint',
       args: [address, amount],
     })
-    refetchUsdcBalance()
+    await publicClient.waitForTransactionReceipt({ hash })
+    await refetchUsdcBalance()
   }
 
   const handleApproveUSDC = async (amount: bigint) => {
-    await approveUSDC({
+    if (!publicClient) return
+    const hash = await approveUSDC({
       address: USDC_ADDRESS,
       abi: mockERC20ABI,
       functionName: 'approve',
       args: [OPTIMIZER_ADDRESS, amount],
     })
-    refetchUsdcAllowance()
+    await publicClient.waitForTransactionReceipt({ hash })
+    await refetchUsdcAllowance()
   }
 
   const handleDeposit = async (amount: bigint) => {
-    await deposit({
+    if (!publicClient) return
+    const hash = await deposit({
       address: OPTIMIZER_ADDRESS,
       abi: yieldOptimizerABI,
       functionName: 'deposit',
       args: [amount],
     })
-    refetchUsdcBalance()
-    refetchUsdcAllowance()
-    refetchUserShares()
-    refetchTotalShares()
+    await publicClient.waitForTransactionReceipt({ hash })
+    await refetchUsdcBalance()
+    await refetchUsdcAllowance()
+    await refetchUserShares()
+    await refetchTotalShares()
   }
 
   const handleWithdraw = async (shares: bigint) => {
-    await withdraw({
+    if (!publicClient) return
+    const hash = await withdraw({
       address: OPTIMIZER_ADDRESS,
       abi: yieldOptimizerABI,
       functionName: 'withdraw',
       args: [shares],
     })
-    refetchUsdcBalance()
-    refetchUserShares()
-    refetchTotalShares()
+    await publicClient.waitForTransactionReceipt({ hash })
+    await refetchUsdcBalance()
+    await refetchUserShares()
+    await refetchTotalShares()
   }
 
   const refetchAll = () => {
@@ -101,6 +141,9 @@ export function useYieldOptimizer() {
     refetchUsdcAllowance()
     refetchUserShares()
     refetchTotalShares()
+    refetchCumulativeLoss()
+    refetchMaxLossThreshold()
+    refetchCurrentFarm()
   }
 
   return {
@@ -110,6 +153,11 @@ export function useYieldOptimizer() {
     usdcAllowance,
     userShares,
     totalOptimizerShares,
+    cumulativeLoss,
+    maxLossThreshold,
+    isPaused,
+    tvl,
+    currentFarm,
     
     // Loading States
     isMinting,

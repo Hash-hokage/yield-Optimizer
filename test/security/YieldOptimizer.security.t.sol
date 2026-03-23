@@ -32,15 +32,16 @@ contract YieldOptimizerSecurityTest is Test {
     MockUniswapV2Factory public factory;
 
     address public paymaster;
-    address public trustedOracle;
+    address public yieldRelayer;
 
     uint256 private constant BPS_DENOMINATOR = 10_000;
-    uint256 private constant FIXED_GAS_OVERHEAD = 50_000;
+    uint256 private constant DEFAULT_GAS_OVERHEAD = 3_000_000;
 
     uint256 private constant INITIAL_USDC_BALANCE = 1_000_000e6; // 1M USDC
     uint256 private constant DEX_RESERVE_USDC = 1_000_000_000e6; // 1B USDC liquidity
     uint256 private constant DEX_RESERVE_TARGET = 1_000_000_000e6; // 1B target token liquidity
     uint256 private constant MAX_LOSS_THRESHOLD = 1_000_000e6;
+    address private constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
 
     /*//////////////////////////////////////////////////////////////
                               EVENTS
@@ -59,9 +60,9 @@ contract YieldOptimizerSecurityTest is Test {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         targetToken = new MockERC20("Target Token", "TGT", 6);
 
-        // --- 2. Deploy mock oracle (also acts as trustedOracle address) ---
+        // --- 2. Deploy mock oracle (also acts as yieldRelayer address) ---
         oracle = new MockOracle();
-        trustedOracle = address(oracle);
+        yieldRelayer = address(oracle);
 
         // --- 3. Create paymaster as a simple labeled address ---
         paymaster = makeAddr("paymaster");
@@ -78,7 +79,7 @@ contract YieldOptimizerSecurityTest is Test {
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 7. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(address(usdc), trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
+        optimizer = new YieldOptimizer(address(usdc), yieldRelayer, address(dex), MAX_LOSS_THRESHOLD);
 
         // --- 8. Seed USDC into the optimizer ---
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
@@ -89,8 +90,7 @@ contract YieldOptimizerSecurityTest is Test {
         // --- 10. Pre-fund the DEX with target tokens so it can fulfil swaps ---
         targetToken.mint(address(dex), DEX_RESERVE_TARGET);
 
-        // --- 11. Set cached reserves on the optimizer (using new admin setter) ---
-        optimizer.updateCachedReserves(DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
+        // --- 11. Set cached reserves on the optimizer (removed) ---
 
         // --- 12. Whitelist the farm (Audit H-03) ---
         optimizer.setFarmAllowed(address(farm), true);
@@ -105,7 +105,7 @@ contract YieldOptimizerSecurityTest is Test {
 
     /// @notice An attacker impersonates a random address and calls `onYieldUpdated`.
     /// @dev The contract MUST revert with `YieldOptimizer__UnauthorizedCallback`
-    ///      because only `trustedOracle` is authorised to invoke the callback.
+    ///      because only the precompile is authorised to invoke the callback.
     ///      Attack surface: If this check were missing, anyone could trigger
     ///      rebalances with fabricated APY values and drain the vault.
     function testRevert_AccessControl() public {
@@ -161,7 +161,7 @@ contract YieldOptimizerSecurityTest is Test {
 
         // --- Act + Assert ---
         // The swap should revert because the DEX can't transfer enough tokens
-        vm.prank(trustedOracle);
+        vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
         vm.expectRevert(); // ERC20 transfer will fail (insufficient balance)
         optimizer.onYieldUpdated(highAPY, address(farm));
     }
@@ -198,7 +198,7 @@ contract YieldOptimizerSecurityTest is Test {
         dex.setReserves(address(usdc), address(targetToken), skewedUSDCReserve, skewedTargetReserve);
 
         // Update cached reserves to match the skewed pool so minAmountOut passes
-        optimizer.updateCachedReserves(skewedUSDCReserve, skewedTargetReserve);
+        // (Cached reserves removed)
 
         // Ensure DEX has enough target tokens to fulfil the (tiny) swap output
         targetToken.mint(address(dex), skewedTargetReserve);
@@ -213,7 +213,7 @@ contract YieldOptimizerSecurityTest is Test {
         assertFalse(optimizer.isPaused(), "Should not be paused initially");
 
         // --- Act ---
-        vm.prank(trustedOracle);
+        vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
         optimizer.onYieldUpdated(highAPY, address(farm));
 
         // --- Assert ---
@@ -231,7 +231,7 @@ contract YieldOptimizerSecurityTest is Test {
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
         targetToken.mint(address(dex), DEX_RESERVE_TARGET);
 
-        vm.prank(trustedOracle);
+        vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
         vm.expectRevert(YieldOptimizer.YieldOptimizer__Paused.selector);
         optimizer.onYieldUpdated(highAPY, address(farm));
     }

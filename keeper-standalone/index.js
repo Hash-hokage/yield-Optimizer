@@ -1,5 +1,11 @@
 /**
  * ============================================================
+ * DIFFERENCE NOTE:
+ * Unlike keeper-bot, this implementation uses a local cache (lastPushedAPY)
+ * to calculate deviation rather than reading the live on-chain value.
+ * It also includes an Express health server.
+ * ============================================================
+ *
  *  Somnia Yield Keeper — Off-Chain APY Relayer Service
  * ============================================================
  *

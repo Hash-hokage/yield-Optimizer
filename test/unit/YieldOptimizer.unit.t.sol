@@ -30,17 +30,18 @@ contract YieldOptimizerUnitTest is Test {
     MockYieldFarm public farm;
     MockUniswapV2Factory public factory;
 
-    address public trustedOracle;
+    address public yieldRelayer;
 
     /// @dev Constants matching the values in YieldOptimizer.
     uint256 private constant BPS_DENOMINATOR = 10_000;
-    uint256 private constant FIXED_GAS_OVERHEAD = 50_000;
+    uint256 private constant DEFAULT_GAS_OVERHEAD = 3_000_000;
 
     /// @dev Test amounts.
     uint256 private constant INITIAL_USDC_BALANCE = 1_000_000e6; // 1M USDC
     uint256 private constant DEX_RESERVE_USDC = 1_000_000_000e6; // 1B USDC liquidity
     uint256 private constant DEX_RESERVE_TARGET = 1_000_000_000e6; // 1B target token liquidity (6 decimals)
     uint256 private constant MAX_LOSS_THRESHOLD = 1_000_000e6;
+    address private constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
 
     /*//////////////////////////////////////////////////////////////
                               EVENTS
@@ -59,9 +60,9 @@ contract YieldOptimizerUnitTest is Test {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         targetToken = new MockERC20("Target Token", "TGT", 6);
 
-        // --- 2. Deploy mock oracle (also acts as trustedOracle address) ---
+        // --- 2. Deploy mock oracle (also acts as yieldRelayer address) ---
         oracle = new MockOracle();
-        trustedOracle = address(oracle);
+        yieldRelayer = address(oracle);
 
         // --- 4. Deploy mock DEX router ---
         dex = new MockDEX();
@@ -76,7 +77,7 @@ contract YieldOptimizerUnitTest is Test {
         farm = new MockYieldFarm(address(targetToken));
 
         // --- 7. Deploy the YieldOptimizer ---
-        optimizer = new YieldOptimizer(address(usdc), trustedOracle, address(dex), MAX_LOSS_THRESHOLD);
+        optimizer = new YieldOptimizer(address(usdc), yieldRelayer, address(dex), MAX_LOSS_THRESHOLD);
 
         // --- 8. Seed USDC into the optimizer ---
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
@@ -87,8 +88,7 @@ contract YieldOptimizerUnitTest is Test {
         // --- 10. Pre-fund the DEX with target tokens so it can fulfil swaps ---
         targetToken.mint(address(dex), DEX_RESERVE_TARGET);
 
-        // --- 11. Set cached reserves on the optimizer (using new admin setter) ---
-        optimizer.updateCachedReserves(DEX_RESERVE_USDC, DEX_RESERVE_TARGET);
+        // --- 11. Set cached reserves on the optimizer (removed) ---
 
         // --- 12. Whitelist the farm (Audit H-03) ---
         optimizer.setFarmAllowed(address(farm), true);
@@ -119,8 +119,8 @@ contract YieldOptimizerUnitTest is Test {
         vm.expectEmit(true, false, false, false, address(optimizer));
         emit OptimizerExecuted(address(farm), 0, 0);
 
-        // Call onYieldUpdated as the trusted oracle
-        vm.prank(trustedOracle);
+        // Call onYieldUpdated as the reactivity precompile
+        vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
         optimizer.onYieldUpdated(highAPY, address(farm));
 
         // --- Assert ---
@@ -159,8 +159,8 @@ contract YieldOptimizerUnitTest is Test {
         vm.txGasPrice(100 gwei);
 
         // --- Act ---
-        // Call onYieldUpdated as the trusted oracle — should return gracefully
-        vm.prank(trustedOracle);
+        // Call onYieldUpdated as the reactivity precompile — should return gracefully
+        vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
         optimizer.onYieldUpdated(tinyAPY, address(farm));
 
         // --- Assert ---
