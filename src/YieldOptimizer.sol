@@ -548,8 +548,14 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
             probeReversePath[0] = targetAsset;
             probeReversePath[1] = usdc;
 
-            // Use a small probe amount (1 token unit) to get the spot rate
-            uint256 probeAmount = 10 ** 6; // 1 unit in 6-decimal precision
+            // Use a small probe amount scaled to the target asset's decimals.
+            // USDC is 6 decimals, but the target token (TGT) is 18 decimals.
+            // A probe of 10**6 against an 18-decimal token is 0.000000000001 TGT —
+            // microscopic enough that the constant-product formula returns 0 USDC,
+            // making impliedUSDC = 0 and slippage = full portfolio, blocking all rebalances.
+            // Using 10**18 probes 1 full unit of any 18-decimal token correctly.
+            // For tokens with fewer decimals this is still safe — it's a read-only view call.
+            uint256 probeAmount = 10 ** 18; // 1 full unit scaled for 18 decimals
 
             try router.getAmountsOut(probeAmount, probeReversePath) returns (uint256[] memory probeAmounts) {
                 if (probeAmounts.length < 2 || probeAmounts[1] == 0) return 0;

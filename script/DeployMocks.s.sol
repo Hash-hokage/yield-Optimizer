@@ -75,6 +75,21 @@ contract DeployMocks is Script {
         mockDex.setReserves(address(usdc), address(targetToken), 100_000e6, 100_000e18);
         console.log("[SEEDED]   Liquidity 100k/100k on Mock DEX");
 
+        // Register the USDC-TGT pair in the factory so the optimizer's routing logic
+        // detects a direct pool and uses a single-hop path [usdc → targetToken].
+        // Without this, getPair() returns address(0) and the optimizer builds a
+        // multi-hop path [usdc → usdc → targetToken] which reverts with NoReservesSet.
+        mockFactory.setPair(address(usdc), address(targetToken), address(mockDex));
+        console.log("[REGISTERED] USDC-TGT pair registered in MockFactory");
+
+        // Fund the DEX contract with actual token balances so swaps can be physically fulfilled.
+        // setReserves() only sets the pricing mapping — it does not transfer tokens.
+        // swapExactTokensForTokens() calls safeTransfer() from the DEX's own balance,
+        // which is zero without this step, causing every swap to revert with ERC20InsufficientBalance.
+        targetToken.mint(address(mockDex), 100_000e18);
+        usdc.mint(address(mockDex), 100_000e6);
+        console.log("[FUNDED]   MockDEX funded with 100k TGT and 100k USDC");
+
         // ─────────────────────────────────────────────────
         //  5. Deploy MockYieldFarm
         // ─────────────────────────────────────────────────

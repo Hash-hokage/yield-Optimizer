@@ -69,6 +69,12 @@ contract DeployCore is Script {
         address deployer = msg.sender;
         console.log("Deployer:            ", deployer);
         console.log("Deployer balance:    ", deployer.balance);
+
+        // MOCK PRECOMPILE LOCALLY: Forge script simulates locally before broadcasting.
+        // It will revert with "call to non-contract" if the precompile address has no code.
+        // We etch a dummy block that returns `1` (uint256) so simulation handles the subscribe() call.
+        vm.etch(REACTIVITY_PRECOMPILE, hex"600160005260206000f3");
+
         vm.startBroadcast(deployer);
 
         require(
@@ -116,6 +122,15 @@ contract DeployCore is Script {
 
         console.log("[SUBSCRIBED] Subscription ID:", yieldOptimizer.subscriptionId());
         console.log("[SUBSCRIBED] YieldOptimizer registered as handler for YieldRelayer.YieldUpdated");
+
+        // ─────────────────────────────────────────────────
+        //  5b. Whitelist the MockYieldFarm
+        // ─────────────────────────────────────────────────
+        // _onEvent checks allowedFarms[targetFarm] and silently returns if false.
+        // The mapping starts empty — if this is not done at deploy time, every reactive
+        // callback will wake up and quietly do nothing with no error or revert.
+        yieldOptimizer.setFarmAllowed(mockFarmAddress, true);
+        console.log("[WHITELISTED] MockYieldFarm approved as rebalance target:", mockFarmAddress);
 
         // ─────────────────────────────────────────────────
         //  6. Stop broadcast
