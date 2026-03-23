@@ -50,11 +50,11 @@ contract DeployMocks is Script {
         //  2. Deploy Mock Tokens
         // ─────────────────────────────────────────────────
         MockERC20 usdc = new MockERC20("Mock USDC", "USDC", 6);
-        MockERC20 targetToken = new MockERC20("Target Farm Token", "TGT", 18);
+        MockERC20 targetToken = new MockERC20("Target Farm Token", "TGT", 6);
 
         // Mint 1,000,000 of each to the deployer
         usdc.mint(deployer, 1_000_000e6);
-        targetToken.mint(deployer, 1_000_000e18);
+        targetToken.mint(deployer, 1_000_000e6);
 
         console.log("[DEPLOYED] Mock USDC:         ", address(usdc));
         console.log("[DEPLOYED] TargetToken (TGT): ", address(targetToken));
@@ -72,7 +72,7 @@ contract DeployMocks is Script {
         // ─────────────────────────────────────────────────
         //  4. Seed Liquidity (100k USDC / 100k TGT)
         // ─────────────────────────────────────────────────
-        mockDex.setReserves(address(usdc), address(targetToken), 100_000e6, 100_000e18);
+        mockDex.setReserves(address(usdc), address(targetToken), 100_000e6, 100_000e6);
         console.log("[SEEDED]   Liquidity 100k/100k on Mock DEX");
 
         // Register the USDC-TGT pair in the factory so the optimizer's routing logic
@@ -86,7 +86,7 @@ contract DeployMocks is Script {
         // setReserves() only sets the pricing mapping — it does not transfer tokens.
         // swapExactTokensForTokens() calls safeTransfer() from the DEX's own balance,
         // which is zero without this step, causing every swap to revert with ERC20InsufficientBalance.
-        targetToken.mint(address(mockDex), 100_000e18);
+        targetToken.mint(address(mockDex), 100_000e6);
         usdc.mint(address(mockDex), 100_000e6);
         console.log("[FUNDED]   MockDEX funded with 100k TGT and 100k USDC");
 

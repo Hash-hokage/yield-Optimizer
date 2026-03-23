@@ -93,7 +93,7 @@ contract DeployTest is Test {
         MockDEX mockDex = MockDEX(deployedMockDex);
         bytes32 pairKey = _pairKey(deployedUsdc, deployedTargetToken);
         assertEq(mockDex.reserves(pairKey, deployedUsdc), 100_000e6, "USDC reserve should be 100k");
-        assertEq(mockDex.reserves(pairKey, deployedTargetToken), 100_000e18, "TGT reserve should be 100k");
+        assertEq(mockDex.reserves(pairKey, deployedTargetToken), 100_000e6, "TGT reserve should be 100k");
 
         // Verify MockFarm's underlying asset is the TargetToken
         assertEq(MockYieldFarm(deployedMockFarm).asset(), deployedTargetToken, "MockFarm asset should be TGT");

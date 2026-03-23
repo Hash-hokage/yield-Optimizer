@@ -211,11 +211,11 @@ contract YieldOptimizerSecurityTest is Test {
         // Ensure DEX has enough target tokens to fulfil the (tiny) swap output
         targetToken.mint(address(dex), skewedTargetReserve);
 
-        // Lower the maxLossThreshold to account for the AMM's non-zero residual output.
-        // The constant-product formula always returns a tiny amount, so loss is never
-        // exactly 100%. Setting threshold to 999K USDC ensures the ~99.999% loss trips it.
-        // Storage slot 1 = maxLossThreshold (verified via `forge inspect`).
-        optimizer.setMaxLossThreshold(999_000e6);
+        // Lower the maxLossThreshold to account for the AMM's non-zero residual output
+        // and the new 0.5% fee buffer (5,000 USDC).
+        // Loss = adjustedPortfolioBefore - portfolioAfter = 995,000 - ~10 = ~994,990.
+        // Setting threshold to 990,000e6 ensures the breaker trips.
+        optimizer.setMaxLossThreshold(990_000e6);
 
         // Sanity: contract is NOT paused before we begin
         assertFalse(optimizer.isPaused(), "Should not be paused initially");
@@ -233,9 +233,9 @@ contract YieldOptimizerSecurityTest is Test {
         // 1. isPaused must be true — circuit breaker has tripped
         assertTrue(optimizer.isPaused(), "isPaused should be true after breaker trips");
 
-        // 2. cumulativeLoss must be at or above the adjusted threshold (999_000e6)
+        // 2. cumulativeLoss must be at or above the adjusted threshold (990_000e6)
         assertGe(
-            optimizer.cumulativeLoss(), 999_000e6, "cumulativeLoss should meet or exceed adjusted maxLossThreshold"
+            optimizer.cumulativeLoss(), 990_000e6, "cumulativeLoss should meet or exceed adjusted maxLossThreshold"
         );
 
         // 3. Attempting another callback must revert with YieldOptimizer__Paused

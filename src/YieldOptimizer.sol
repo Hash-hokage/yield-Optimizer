@@ -67,14 +67,6 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     /// @notice The Uniswap V2-style DEX router used for token swaps during rebalances.
     IDEXRouter public immutable router;
 
-    /*//////////////////////////////////////////////////////////////
-                    RISKGUARD STATE (STORAGE-PACKED)
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Whether the optimizer is currently paused by the RiskGuard.
-    /// @dev When `true`, all rebalancing and swap operations are blocked.
-    bool public isPaused;
-
     /// @notice The maximum cumulative loss (in USDC) allowed before the RiskGuard
     ///         automatically pauses the contract.
     uint256 public maxLossThreshold;
@@ -87,6 +79,10 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     /// @notice The address of the yield farm where funds are currently deployed.
     /// @dev `address(0)` means funds are idle in USDC and not deposited in any farm.
     address public currentFarm;
+
+    /// @notice Whether the optimizer is currently paused by the RiskGuard.
+    /// @dev When `true`, all rebalancing and swap operations are blocked.
+    bool public isPaused;
 
     /// @notice The active Somnia reactivity subscription ID. 0 = no active subscription.
     uint256 public subscriptionId;
@@ -348,9 +344,13 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
 
         emit OptimizerExecuted(targetFarm, profitUSDC, totalGasUsed);
 
-        // --- 10. RiskGuard ---
-        if (portfolioAfter < portfolioBefore) {
-            uint256 loss = portfolioBefore - portfolioAfter;
+        // --- 10. RiskGuard (Fee-Adjusted) ---
+        // Allow a 0.5% buffer for immediate AMM swap fees and slippage
+        uint256 feeBuffer = (portfolioBefore * 50) / 10000;
+        uint256 adjustedPortfolioBefore = portfolioBefore - feeBuffer;
+
+        if (portfolioAfter < adjustedPortfolioBefore) {
+            uint256 loss = adjustedPortfolioBefore - portfolioAfter;
             cumulativeLoss += loss;
             if (cumulativeLoss >= maxLossThreshold) {
                 isPaused = true;
@@ -549,13 +549,10 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
             probeReversePath[1] = usdc;
 
             // Use a small probe amount scaled to the target asset's decimals.
-            // USDC is 6 decimals, but the target token (TGT) is 18 decimals.
-            // A probe of 10**6 against an 18-decimal token is 0.000000000001 TGT —
-            // microscopic enough that the constant-product formula returns 0 USDC,
-            // making impliedUSDC = 0 and slippage = full portfolio, blocking all rebalances.
-            // Using 10**18 probes 1 full unit of any 18-decimal token correctly.
-            // For tokens with fewer decimals this is still safe — it's a read-only view call.
-            uint256 probeAmount = 10 ** 18; // 1 full unit scaled for 18 decimals
+            // USDC and the target token (TGT) are both 6 decimals.
+            // Using 10**6 probes 1 full unit of any 6-decimal token correctly.
+            // For tokens with more decimals this is still safe — it's a read-only view call.
+            uint256 probeAmount = 10 ** 6; // 1 full unit scaled for 6 decimals
 
             try router.getAmountsOut(probeAmount, probeReversePath) returns (uint256[] memory probeAmounts) {
                 if (probeAmounts.length < 2 || probeAmounts[1] == 0) return 0;
@@ -602,6 +599,12 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     }
 
     function setFarmAllowed(address farm, bool allowed) external onlyOwner {
+        if (allowed) {
+            address asset = IYieldFarm(farm).asset();
+            // Ensure the underlying asset is 6 decimals to match USDC
+            (bool success, bytes memory data) = asset.staticcall(abi.encodeWithSignature("decimals()"));
+            require(success && abi.decode(data, (uint8)) == 6, "YieldOptimizer: Only 6-decimal assets allowed");
+        }
         allowedFarms[farm] = allowed;
     }
 
