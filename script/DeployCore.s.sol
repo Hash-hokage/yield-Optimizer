@@ -72,8 +72,8 @@ contract DeployCore is Script {
         vm.startBroadcast(deployer);
 
         require(
-            deployer.balance >= SUBSCRIPTION_DEPOSIT,
-            "DeployCore: Deployer must hold >= 32 STT for subscription deposit"
+            deployer.balance >= SUBSCRIPTION_DEPOSIT + 1 ether,
+            "DeployCore: Deployer must hold >= 33 STT (32 for subscription deposit + 1 for gas)"
         );
 
         // ─────────────────────────────────────────────────
@@ -92,6 +92,15 @@ contract DeployCore is Script {
             MAX_LOSS_THRESHOLD
         );
         console.log("[DEPLOYED] YieldOptimizer:    ", address(yieldOptimizer));
+
+        // ─────────────────────────────────────────────────
+        //  4b. Fund YieldOptimizer with 32 STT
+        // ─────────────────────────────────────────────────
+        // YieldOptimizer must hold >= 32 STT to be the subscription owner.
+        // It calls subscribe() on itself, so its own balance is checked by the precompile.
+        (bool funded,) = address(yieldOptimizer).call{value: SUBSCRIPTION_DEPOSIT}("");
+        require(funded, "DeployCore: Failed to fund YieldOptimizer with 32 STT");
+        console.log("[FUNDED]   YieldOptimizer funded with 32 STT");
 
         // ─────────────────────────────────────────────────
         //  5. Somnia Reactivity Subscription

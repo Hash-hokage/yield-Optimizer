@@ -261,9 +261,13 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
             // Convert USDC shortfall → farm shares using the farm's exchange rate
             uint256 farmTotalAssets = IYieldFarm(currentFarm).totalAssets();
             uint256 farmTotalSupply = IERC20(currentFarm).totalSupply();
-            uint256 farmSharesNeeded = (shortfall * farmTotalSupply) / farmTotalAssets;
-
-            IYieldFarm(currentFarm).redeem(farmSharesNeeded, address(this), address(this));
+            // Guard: skip redemption if the farm has no assets or supply — avoids division by zero
+            if (farmTotalAssets > 0 && farmTotalSupply > 0) {
+                uint256 farmSharesNeeded = (shortfall * farmTotalSupply) / farmTotalAssets;
+                if (farmSharesNeeded > 0) {
+                    IYieldFarm(currentFarm).redeem(farmSharesNeeded, address(this), address(this));
+                }
+            }
         }
 
         // --- 4. Cap assetsOwed to actual balance (absorbs rounding dust from farm redemption) ---
@@ -626,4 +630,10 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
         (bool success,) = msg.sender.call{value: address(this).balance}("");
         if (!success) revert YieldOptimizer__ETHWithdrawFailed();
     }
+
+    /// @notice Allows the contract to receive native STT for reactivity subscription funding.
+    /// @dev    The contract must hold >= 32 STT for the Somnia reactivity subscription to remain
+    ///         active. This function enables the deploy script to fund the contract via a direct
+    ///         ETH/STT transfer during deployment.
+    receive() external payable {}
 }

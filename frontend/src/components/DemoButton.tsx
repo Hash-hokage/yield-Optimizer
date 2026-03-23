@@ -134,7 +134,7 @@ export function DemoButton() {
                   )}
                 </div>
                 <a
-                  href={`https://somnia-testnet.socialscan.io/tx/${txHash}`}
+                  href={`https://shannon-explorer.somnia.network/tx/${txHash}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 transition-colors break-all font-mono"
