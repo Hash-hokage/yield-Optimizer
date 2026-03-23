@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Script, console} from "forge-std/Script.sol";
 import {YieldRelayer} from "../src/YieldRelayer.sol";
 import {YieldOptimizer} from "../src/YieldOptimizer.sol";
-import {ISomniaReactivity} from "../src/interfaces/ISomniaReactivity.sol";
+
 
 /// @title DeployCore — The Application
 /// @author Hash-Hokage
@@ -98,19 +98,16 @@ contract DeployCore is Script {
         //  5. Somnia Reactivity Subscription
         // ─────────────────────────────────────────────────
         console.log("");
-        console.log("--- Subscribing YieldOptimizer to YieldRelayer events ---");
+        console.log("--- Creating Reactivity Subscription via YieldOptimizer ---");
+        console.log("YieldOptimizer will self-subscribe so it is the subscription owner.");
+        console.log("Ensure YieldOptimizer holds >= 32 STT before calling this.");
 
-        // The optimizer must subscribe to the YieldUpdated event from the relayer.
-        // Once subscribed, Somnia's precompile will call yieldOptimizer.onYieldUpdated()
-        // automatically whenever yieldRelayer emits YieldUpdated.
-        ISomniaReactivity reactivityPrecompile = ISomniaReactivity(REACTIVITY_PRECOMPILE);
+        // YieldOptimizer calls subscribe on itself — it becomes the subscription owner.
+        // handlerGasLimit = 3_000_000 for a complex handler (swap + farm deposit).
+        yieldOptimizer.createReactivitySubscription(3_000_000);
 
-        reactivityPrecompile.subscribe(
-            address(yieldRelayer),
-            keccak256("YieldUpdated(uint256,address)")
-        );
-
-        console.log("[SUBSCRIBED] YieldOptimizer listening to YieldRelayer.YieldUpdated");
+        console.log("[SUBSCRIBED] Subscription ID:", yieldOptimizer.subscriptionId());
+        console.log("[SUBSCRIBED] YieldOptimizer registered as handler for YieldRelayer.YieldUpdated");
 
         // ─────────────────────────────────────────────────
         //  6. Stop broadcast

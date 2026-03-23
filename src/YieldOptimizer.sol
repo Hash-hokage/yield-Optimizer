@@ -3,19 +3,20 @@ pragma solidity ^0.8.20;
 
 import {IDEXRouter} from "./interfaces/IDEXRouter.sol";
 import {IYieldFarm} from "./interfaces/IYieldFarm.sol";
-import {ISomniaReactivity} from "./interfaces/ISomniaReactivity.sol";
+import {ISomniaReactivityPrecompile} from "./interfaces/ISomniaReactivity.sol";
 import {IUniswapV2Factory} from "./interfaces/IUniswapV2Factory.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { SomniaEventHandler } from "@somnia-chain/reactivity-contracts/contracts/SomniaEventHandler.sol";
 
 /// @title YieldOptimizer
 /// @author Hash-Hokage
 /// @notice A secure, gas-efficient yield optimizer that rebalances across ERC-4626 vaults
 ///         using Somnia's reactive callback system.
 /// @dev This contract is designed to:
-///      - Receive real-time APY updates via `ISomniaReactivity.onYieldUpdated`.
+///      - Receive real-time APY updates via callbacks from the reactivity system.
 ///      - Rebalance USDC across yield farms when a better rate is detected.
 ///      - Execute swaps through a Uniswap V2-style DEX router with strict slippage protection.
 ///      - Enforce a cumulative loss threshold ("RiskGuard") that pauses operations if breached.
@@ -34,7 +35,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 ///      (DEX swap + vault deposit), so the reactivity subscription `gasLimit` MUST be
 ///      set to at least `3_000_000` with `priorityFeePerGas >= 2 gwei` (2,000,000,000 wei).
 ///      See: Somnia Reactivity Precompile at `0x0000000000000000000000000000000000000100`.
-contract YieldOptimizer is Ownable, ReentrancyGuard {
+contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     /*//////////////////////////////////////////////////////////////
                               ERRORS
@@ -46,8 +47,7 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
     /// @dev Reverted when the contract is paused by the RiskGuard.
     error YieldOptimizer__Paused();
 
-    /// @dev Reverted when `msg.sender` is not the reactivity precompile in a reactive callback.
-    error YieldOptimizer__UnauthorizedCallback();
+
 
     /// @dev Reverted when a user tries to withdraw more shares than they hold.
     error YieldOptimizer__InsufficientShares();
@@ -59,10 +59,7 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
                      NETWORK ADDRESSES (IMMUTABLE)
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice The canonical Somnia Reactivity Precompile address.
-    /// @dev This is the address that msg.sender will equal when a reactive
-    ///      callback is invoked by the Somnia network after a subscribed event fires.
-    address public constant SOMNIA_REACTIVITY_PRECOMPILE = 0x0000000000000000000000000000000000000100;
+
 
     /// @notice The address of the USDC token used as the base denomination for all operations.
     address public immutable usdc;
@@ -94,6 +91,9 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
     /// @notice The address of the yield farm where funds are currently deployed.
     /// @dev `address(0)` means funds are idle in USDC and not deposited in any farm.
     address public currentFarm;
+
+    /// @notice The active Somnia reactivity subscription ID. 0 = no active subscription.
+    uint256 public subscriptionId;
 
     /*//////////////////////////////////////////////////////////////
                          FARM WHITELIST (H-03)
@@ -288,77 +288,125 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
                        REACTIVE CALLBACK
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Reactive callback invoked automatically by the Somnia reactivity precompile
-    ///         (0x0000000000000000000000000000000000000100) when the subscribed YieldRelayer
+    /// @notice Reactive callback invoked by the Somnia precompile (0x0100) when YieldRelayer
     ///         emits a `YieldUpdated(uint256,address)` event.
     /// @dev Call chain:
-    ///        1. Off-chain Keeper calls `YieldRelayer.pushYieldUpdate(apy, farm)`
-    ///        2. YieldRelayer emits `YieldUpdated(apy, farm)`
-    ///        3. Somnia's reactivity precompile detects the event (because YieldOptimizer
-    ///           subscribed via `ISomniaReactivity.subscribe` in the deploy script)
-    ///        4. Precompile calls this function with msg.sender == SOMNIA_REACTIVITY_PRECOMPILE
-    ///      SECURITY: msg.sender is checked against SOMNIA_REACTIVITY_PRECOMPILE.
-    ///      Any direct call from a non-precompile address will revert.
-    ///      The profitability check normalizes the annualized newAPY into a HOLDING_PERIOD_DAYS-period yield before comparing it against the one-time gas + slippage cost of rebalancing. A rebalance is only executed if the expected yield over the holding period exceeds total costs with a 1.1× safety buffer.
-    /// @param newAPY The updated annual percentage yield in basis points (e.g. 500 = 5.00%).
-    /// @param targetFarm The address of the yield farm to rebalance into.
-    function onYieldUpdated(uint256 newAPY, address targetFarm) external {
-        // --- 1. Access control: only the Somnia reactivity precompile may call this ---
-        // The YieldRelayer emits the event; Somnia routes it; the precompile calls this function.
-        if (msg.sender != SOMNIA_REACTIVITY_PRECOMPILE) {
-            revert YieldOptimizer__UnauthorizedCallback();
-        }
+    ///        1. Off-chain Keeper → YieldRelayer.pushYieldUpdate(apy, farm)
+    ///        2. YieldRelayer emits YieldUpdated(apy, farm)
+    ///        3. Somnia validators detect the event (this contract subscribed via DeployCore)
+    ///        4. Precompile calls onEvent() on this contract (inherited from SomniaEventHandler)
+    ///        5. SomniaEventHandler.onEvent() validates msg.sender == precompile, then calls _onEvent
+    ///
+    /// @dev YieldUpdated(uint256 newAPY, address targetFarm) encoding:
+    ///        eventTopics[0] = keccak256("YieldUpdated(uint256,address)")
+    ///        data           = abi.encode(newAPY, targetFarm)
+    ///        (both params are non-indexed, so they arrive in `data`)
+    ///
+    /// @param emitter     The contract that emitted the event (should be yieldRelayer).
+    /// @param eventTopics The event's topics array. [0] is the event signature hash.
+    /// @param data        ABI-encoded event parameters: abi.encode(uint256 newAPY, address targetFarm).
+    function _onEvent(
+        address emitter,
+        bytes32[] calldata eventTopics,
+        bytes calldata data
+    ) internal override nonReentrant {
+        // --- 1. Validate the event source is our trusted relayer ---
+        if (emitter != yieldRelayer) return; // Silently ignore events from other contracts
 
-        // --- 2. Farm whitelist (Audit H-03 fix) ---
-        require(allowedFarms[targetFarm], "Farm not whitelisted");
+        // --- 2. Validate event signature ---
+        if (eventTopics.length == 0) return;
+        if (eventTopics[0] != keccak256("YieldUpdated(uint256,address)")) return;
 
-        // --- 3. Circuit breaker ---
-        if (isPaused) revert YieldOptimizer__Paused();
+        // --- 3. Decode the event parameters ---
+        (uint256 newAPY, address targetFarm) = abi.decode(data, (uint256, address));
 
-        // --- 4. Snapshot total portfolio value before rebalance (Audit M-04 fix) ---
+        // --- 4. Farm whitelist ---
+        if (!allowedFarms[targetFarm]) return;
+
+        // --- 5. Circuit breaker ---
+        if (isPaused) return;
+
+        // --- 6. Same-farm guard — skip wasteful no-op rebalances ---
+        if (targetFarm == currentFarm) return;
+
+        // --- 7. Snapshot portfolio value before rebalance ---
         uint256 portfolioBefore = _getPortfolioValue();
+        if (portfolioBefore == 0) return;
 
-        // --- 5. Profitability math ---
-        // Normalize annual APY to a per-period yield estimate.
-        // Formula: portfolioBefore * newAPY / BPS_DENOMINATOR / (365 / HOLDING_PERIOD_DAYS)
-        // Simplified to avoid integer division precision loss:
-        // = portfolioBefore * newAPY * HOLDING_PERIOD_DAYS / (BPS_DENOMINATOR * 365)
+        // --- 8. Profitability check ---
         uint256 deltaY = (portfolioBefore * newAPY * HOLDING_PERIOD_DAYS) / (BPS_DENOMINATOR * 365);
-
-        // Estimate live slippage using current on-chain pool prices
         address targetAsset = IYieldFarm(targetFarm).asset();
         uint256 slippage = _estimateLiveSlippage(portfolioBefore, targetAsset);
-
         uint256 estimatedGasCost = gasOverheadEstimate * tx.gasprice;
         uint256 gasCostUSDC = (estimatedGasCost * ETH_PRICE_USDC) / 1e18;
-
         uint256 totalCostWithBuffer = ((gasCostUSDC + slippage) * SAFETY_BUFFER_NUMERATOR) / SAFETY_BUFFER_DENOMINATOR;
 
-        if (deltaY <= totalCostWithBuffer) {
-            // Not profitable — return gracefully without reverting.
-            return;
-        }
+        if (deltaY <= totalCostWithBuffer) return;
 
-        // --- 6. Execute the rebalance ---
-        // Capture gas remaining before rebalance execution for accurate gas accounting
+        // --- 9. Execute the rebalance ---
         uint256 gasAtStart = gasleft();
-        (uint256 profitUSDC, uint256 gasUsed, , uint256 portfolioAfter) = _executeRebalance(targetFarm, portfolioBefore);
-
-        // Account for gas used outside _executeRebalance (the profitability check itself)
+        (uint256 profitUSDC, uint256 gasUsed, , uint256 portfolioAfter) =
+            _executeRebalance(targetFarm, portfolioBefore);
         uint256 totalGasUsed = gasUsed + (gasAtStart - gasleft());
 
         emit OptimizerExecuted(targetFarm, profitUSDC, totalGasUsed);
 
-        // --- 7. RiskGuard: check for losses using full portfolio value (Audit M-04 fix) ---
+        // --- 10. RiskGuard ---
         if (portfolioAfter < portfolioBefore) {
             uint256 loss = portfolioBefore - portfolioAfter;
             cumulativeLoss += loss;
-
             if (cumulativeLoss >= maxLossThreshold) {
                 isPaused = true;
                 emit RiskGuardTripped(cumulativeLoss);
             }
         }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                   SUBSCRIPTION MANAGEMENT
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Creates the reactivity subscription so Somnia delivers YieldUpdated callbacks.
+    /// @dev    This contract (msg.sender) becomes the subscription owner — it must hold >= 32 STT.
+    ///         Gas params follow official Somnia recommendations for complex handlers.
+    ///         Call this once after deployment. Reverts if already subscribed.
+    /// @param  handlerGasLimit Max gas per callback invocation (recommended: 3_000_000 for this handler).
+    function createReactivitySubscription(uint64 handlerGasLimit) external onlyOwner {
+        require(subscriptionId == 0, "YieldOptimizer: already subscribed");
+
+        ISomniaReactivityPrecompile.SubscriptionData memory subData =
+            ISomniaReactivityPrecompile.SubscriptionData({
+                eventTopics: [
+                    keccak256("YieldUpdated(uint256,address)"),
+                    bytes32(0),
+                    bytes32(0),
+                    bytes32(0)
+                ],
+                origin:                  address(0),   // wildcard
+                caller:                  address(0),   // wildcard
+                emitter:                 yieldRelayer, // only watch our relayer
+                handlerContractAddress:  address(this),
+                handlerFunctionSelector: this.onEvent.selector,
+                priorityFeePerGas:       2_000_000_000,  // 2 gwei — Somnia minimum
+                maxFeePerGas:            10_000_000_000, // 10 gwei — Somnia minimum
+                gasLimit:                handlerGasLimit,
+                isGuaranteed:            true,
+                isCoalesced:             false
+            });
+
+        ISomniaReactivityPrecompile precompile =
+            ISomniaReactivityPrecompile(0x0000000000000000000000000000000000000100);
+
+        subscriptionId = precompile.subscribe(subData);
+    }
+
+    /// @notice Cancels the active reactivity subscription.
+    /// @dev Only callable by the owner. Sets subscriptionId to 0.
+    function cancelReactivitySubscription() external onlyOwner {
+        require(subscriptionId != 0, "YieldOptimizer: no active subscription");
+        ISomniaReactivityPrecompile(0x0000000000000000000000000000000000000100)
+            .unsubscribe(subscriptionId);
+        subscriptionId = 0;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -470,7 +518,12 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
         if (currentFarm != address(0)) {
             uint256 shares = IERC20(currentFarm).balanceOf(address(this));
             if (shares > 0) {
-                usdcBalance += (shares * IYieldFarm(currentFarm).totalAssets()) / IERC20(currentFarm).totalSupply();
+                uint256 farmTotalSupply = IERC20(currentFarm).totalSupply();
+                // Guard against division by zero if the farm has no shares outstanding
+                if (farmTotalSupply > 0) {
+                    usdcBalance += (shares * IYieldFarm(currentFarm).totalAssets()) / farmTotalSupply;
+                }
+                // If farmTotalSupply == 0, farm shares are worthless — treat as zero value
             }
         }
 
@@ -503,27 +556,28 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
         try router.getAmountsOut(amount, path) returns (uint256[] memory amounts) {
             if (amounts.length < 2 || amounts[1] == 0) return 0;
 
-            // Ideal output if there were zero price impact:
-            // idealOut = amount (since we're moving USDC→asset→USDC conceptually,
-            // the round-trip cost approximates 2× one-way fee+impact).
-            // Simpler: compare quoted output to a "perfect" output assuming spot price.
-            // We use the quoted rate to back-compute USDC equivalent of output,
-            // then take the difference from the input amount.
+            // Estimate the USDC value of the received tokens using a 1-unit probe.
+            // This avoids a second full-sized reverse quote (which would double-count slippage).
+            // Probe: how many USDC does 1 unit of targetAsset buy back?
+            address[] memory probeReversePath = new address[](2);
+            probeReversePath[0] = targetAsset;
+            probeReversePath[1] = usdc;
 
-            // quotedRate: how many targetAsset tokens per USDC (scaled to 1e6)
-            // priceImpact is implicitly captured in amounts[1] vs spot.
+            // Use a small probe amount (1 token unit) to get the spot rate
+            uint256 probeAmount = 10 ** 6; // 1 unit in 6-decimal precision
 
-            // For a simple estimate: slippage ≈ amountIn - (amountOut_in_usdc)
-            // We re-quote the reverse to get USDC back:
-            address[] memory reversePath = new address[](2);
-            reversePath[0] = targetAsset;
-            reversePath[1] = usdc;
+            try router.getAmountsOut(probeAmount, probeReversePath)
+                returns (uint256[] memory probeAmounts)
+            {
+                if (probeAmounts.length < 2 || probeAmounts[1] == 0) return 0;
 
-            try router.getAmountsOut(amounts[1], reversePath) returns (uint256[] memory reverseAmounts) {
-                if (reverseAmounts.length < 2) return 0;
-                uint256 roundTripUSDC = reverseAmounts[1];
-                if (amount > roundTripUSDC) {
-                    slippageUSDC = amount - roundTripUSDC;
+                // Implied USDC value of the received targetAsset tokens, using spot rate
+                // impliedUSDC = amounts[1] * usdcPerTargetUnit / probeAmount
+                uint256 impliedUSDC = (amounts[1] * probeAmounts[1]) / probeAmount;
+
+                // Slippage = how much USDC value was lost in one direction
+                if (amount > impliedUSDC) {
+                    slippageUSDC = amount - impliedUSDC;
                 }
             } catch {
                 return 0;
@@ -546,6 +600,13 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
         require(_newEstimate > 0, "YieldOptimizer: gas estimate must be > 0");
         emit GasOverheadUpdated(gasOverheadEstimate, _newEstimate);
         gasOverheadEstimate = _newEstimate;
+    }    /// @notice Updates the maximum cumulative loss threshold for the RiskGuard.
+    /// @dev    Only used for testing and post-deployment tuning. Lowering this threshold
+    ///         while `cumulativeLoss` is already near it will trip the circuit breaker.
+    /// @param _newThreshold New threshold in USDC (6 decimals).
+    function setMaxLossThreshold(uint256 _newThreshold) external onlyOwner {
+        require(_newThreshold > 0, "YieldOptimizer: threshold must be > 0");
+        maxLossThreshold = _newThreshold;
     }
 
     function setFarmAllowed(address farm, bool allowed) external onlyOwner {
@@ -568,6 +629,13 @@ contract YieldOptimizer is Ownable, ReentrancyGuard {
                    ADMIN — EMERGENCY WITHDRAWALS (L-01)
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice Transfers any ERC-20 token held by this contract to the owner. OWNER ONLY.
+    /// @dev    WARNING: This bypasses share accounting. Calling this with the USDC address
+    ///         will drain depositor funds while their userShares remain intact — a rug vector.
+    ///         In production this MUST be replaced with a governance-gated timelock and a
+    ///         mandatory user-notification window. For testnet / hackathon use only.
+    /// @param token  The ERC-20 token address to withdraw.
+    /// @param amount The amount to withdraw in the token's native decimals.
     function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
         IERC20(token).safeTransfer(msg.sender, amount);
     }

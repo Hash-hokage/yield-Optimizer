@@ -114,9 +114,13 @@ contract YieldOptimizerSecurityTest is Test {
         uint256 maliciousAPY = 9999; // Max-boost APY to force rebalance
 
         // --- Act + Assert ---
+        bytes memory eventData = abi.encode(maliciousAPY, address(farm));
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = keccak256("YieldUpdated(uint256,address)");
+
         vm.prank(attacker);
-        vm.expectRevert(YieldOptimizer.YieldOptimizer__UnauthorizedCallback.selector);
-        optimizer.onYieldUpdated(maliciousAPY, address(farm));
+        vm.expectRevert(); // unauthorized sender is rejected by SomniaEventHandler
+        optimizer.onEvent(address(yieldRelayer), topics, eventData);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -161,9 +165,13 @@ contract YieldOptimizerSecurityTest is Test {
 
         // --- Act + Assert ---
         // The swap should revert because the DEX can't transfer enough tokens
+        bytes memory eventData = abi.encode(highAPY, address(farm));
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = keccak256("YieldUpdated(uint256,address)");
+
         vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
         vm.expectRevert(); // ERC20 transfer will fail (insufficient balance)
-        optimizer.onYieldUpdated(highAPY, address(farm));
+        optimizer.onEvent(address(yieldRelayer), topics, eventData);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -207,14 +215,18 @@ contract YieldOptimizerSecurityTest is Test {
         // The constant-product formula always returns a tiny amount, so loss is never
         // exactly 100%. Setting threshold to 999K USDC ensures the ~99.999% loss trips it.
         // Storage slot 1 = maxLossThreshold (verified via `forge inspect`).
-        vm.store(address(optimizer), bytes32(uint256(1)), bytes32(uint256(999_000e6)));
+        optimizer.setMaxLossThreshold(999_000e6);
 
         // Sanity: contract is NOT paused before we begin
         assertFalse(optimizer.isPaused(), "Should not be paused initially");
 
         // --- Act ---
+        bytes memory eventData1 = abi.encode(highAPY, address(farm));
+        bytes32[] memory topics1 = new bytes32[](1);
+        topics1[0] = keccak256("YieldUpdated(uint256,address)");
+
         vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
-        optimizer.onYieldUpdated(highAPY, address(farm));
+        optimizer.onEvent(address(yieldRelayer), topics1, eventData1);
 
         // --- Assert ---
 
@@ -231,8 +243,15 @@ contract YieldOptimizerSecurityTest is Test {
         usdc.mint(address(optimizer), INITIAL_USDC_BALANCE);
         targetToken.mint(address(dex), DEX_RESERVE_TARGET);
 
+        bytes memory eventData2 = abi.encode(highAPY, address(farm));
+        bytes32[] memory topics2 = new bytes32[](1);
+        topics2[0] = keccak256("YieldUpdated(uint256,address)");
+
+        uint256 usdcBeforeSecondCall = usdc.balanceOf(address(optimizer));
+
         vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
-        vm.expectRevert(YieldOptimizer.YieldOptimizer__Paused.selector);
-        optimizer.onYieldUpdated(highAPY, address(farm));
+        optimizer.onEvent(address(yieldRelayer), topics2, eventData2);
+
+        assertEq(usdc.balanceOf(address(optimizer)), usdcBeforeSecondCall, "USDC should not be touched while paused");
     }
 }

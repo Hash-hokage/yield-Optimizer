@@ -89,8 +89,12 @@ contract YieldOptimizerHandler is Test {
         vm.txGasPrice(1 wei);
 
         // Call the optimizer as the reactivity precompile
+        bytes memory eventData = abi.encode(randomAPY, address(farm));
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = keccak256("YieldUpdated(uint256,address)");
+
         vm.prank(reactivityPrecompile);
-        try optimizer.onYieldUpdated(randomAPY, address(farm)) {} catch {}
+        try optimizer.onEvent(optimizer.yieldRelayer(), topics, eventData) {} catch {}
         // --- Re-seed for next iteration ---
         // Mint fresh USDC into the optimizer so subsequent calls have capital
         usdc.mint(address(optimizer), SEED_AMOUNT);

@@ -8,7 +8,7 @@ export const yieldOptimizerABI = [
         "internalType": "address"
       },
       {
-        "name": "_trustedOracle",
+        "name": "_yieldRelayer",
         "type": "address",
         "internalType": "address"
       },
@@ -43,6 +43,26 @@ export const yieldOptimizerABI = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "cancelReactivitySubscription",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createReactivitySubscription",
+    "inputs": [
+      {
+        "name": "handlerGasLimit",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -110,6 +130,19 @@ export const yieldOptimizerABI = [
   },
   {
     "type": "function",
+    "name": "gasOverheadEstimate",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isPaused",
     "inputs": [],
     "outputs": [
@@ -136,17 +169,22 @@ export const yieldOptimizerABI = [
   },
   {
     "type": "function",
-    "name": "onYieldUpdated",
+    "name": "onEvent",
     "inputs": [
       {
-        "name": "newAPY",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "targetFarm",
+        "name": "emitter",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "eventTopics",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -212,6 +250,51 @@ export const yieldOptimizerABI = [
   },
   {
     "type": "function",
+    "name": "setGasOverheadEstimate",
+    "inputs": [
+      {
+        "name": "_newEstimate",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "subscriptionId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "supportsInterface",
+    "inputs": [
+      {
+        "name": "interfaceId",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "totalOptimizerShares",
     "inputs": [],
     "outputs": [
@@ -235,19 +318,6 @@ export const yieldOptimizerABI = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "trustedOracle",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -302,6 +372,19 @@ export const yieldOptimizerABI = [
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "yieldRelayer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "Deposited",
     "inputs": [
@@ -319,6 +402,25 @@ export const yieldOptimizerABI = [
       },
       {
         "name": "shares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GasOverheadUpdated",
+    "inputs": [
+      {
+        "name": "oldEstimate",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newEstimate",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -410,6 +512,11 @@ export const yieldOptimizerABI = [
   },
   {
     "type": "error",
+    "name": "OnlyReactivityPrecompile",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OwnableInvalidOwner",
     "inputs": [
       {
@@ -459,11 +566,6 @@ export const yieldOptimizerABI = [
   {
     "type": "error",
     "name": "YieldOptimizer__Paused",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "YieldOptimizer__UnauthorizedCallback",
     "inputs": []
   },
   {

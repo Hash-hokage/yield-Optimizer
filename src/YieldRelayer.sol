@@ -27,7 +27,8 @@ contract YieldRelayer is Ownable {
     // ──────────────────────────────────────────────
 
     /// @notice Emitted every time a new APY figure is pushed for a target farm.
-    /// @param newAPY   The latest annualised percentage yield (scaled by 1e18).
+    /// @param newAPY   The latest annualised percentage yield in basis points (100 bps = 1%).
+    ///                 Valid range: 1–10000. Example: 500 = 5.00% APY.
     /// @param targetFarm The address of the farm / vault this APY relates to.
     event YieldUpdated(uint256 newAPY, address targetFarm);
 

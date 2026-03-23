@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@somnia-chain/reactivity-contracts": "^0.1.6"
+  }
+}

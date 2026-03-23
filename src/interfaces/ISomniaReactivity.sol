@@ -1,107 +1,34 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity ^0.8.20;
 
-/// @title ISomniaReactivity
-/// @author Hash-Hokage
-/// @notice Interface for Somnia's native reactive callback system, enabling contracts to
-///         subscribe to on-chain events and receive automatic callbacks when they fire.
-/// @dev Somnia's reactivity layer allows smart contracts to register interest in specific
-///      events emitted by other contracts. When the subscribed event is detected, the
-///      network triggers a callback on the subscriber automatically.
-///
-///      This interface defines two concerns:
-///      1. **Subscription** — Binding a listener to a specific contract + event pair.
-///      2. **Callback**     — The handler that the subscribing contract must implement.
-///
-///      **Relationship to the Official Somnia Reactivity Infrastructure:**
-///      The canonical approach uses the `SomniaEventHandler` base contract
-///      (from the somnia-chain/reactivity-contracts npm package) and the Precompile at
-///      `0x0000000000000000000000000000000000000100`. That precompile invokes the
-///      handler's `onEvent(address,bytes32[],bytes)` method.
-///
-///      This project uses a **custom abstraction** where the `YieldRelayer` emits a
-///      `YieldUpdated` event, Somnia's reactive nodes route it, and the `YieldOptimizer`
-///      exposes a typed `onYieldUpdated(uint256,address)` callback verified against
-///      `trustedOracle` (the `YieldRelayer` address). Both patterns are valid.
-///
-///      > [!CAUTION]
-///      > **Security-Critical: `msg.sender` Verification in Callbacks**
-///      >
-///      > Implementing contracts **MUST** verify `msg.sender` inside every callback
-///      > (e.g., `onYieldUpdated`) to ensure the call originates from the trusted Somnia
-///      > reactivity runtime. Failing to do so allows any external account or contract to
-///      > invoke the callback with arbitrary data, leading to **spoofed events** that could
-///      > manipulate yield calculations, trigger unauthorized rebalances, or drain funds.
-///      >
-///      > Recommended pattern:
-///      > ```solidity
-///      > modifier onlyReactivityRuntime() {
-///      >     require(msg.sender == SOMNIA_REACTIVITY_RUNTIME, "Unauthorized callback");
-///      >     _;
-///      > }
-///      > ```
-interface ISomniaReactivity {
-    /*//////////////////////////////////////////////////////////////
-                              EVENTS
-    //////////////////////////////////////////////////////////////*/
+/// @title ISomniaReactivityPrecompile
+/// @notice Interface for the Somnia Reactivity Precompile at 0x0000000000000000000000000000000000000100.
+/// @dev Contracts call subscribe(SubscriptionData) to register a handler that the precompile
+///      will invoke whenever a matching event is emitted. The subscription owner must hold >= 32 STT.
+interface ISomniaReactivityPrecompile {
+    /// @notice Full subscription configuration passed to subscribe().
+    struct SubscriptionData {
+        bytes32[4] eventTopics;          // Topic filters; bytes32(0) = wildcard
+        address origin;                  // tx.origin filter (address(0) = wildcard)
+        address caller;                  // msg.sender filter (address(0) = wildcard)
+        address emitter;                 // Contract whose events to watch (address(0) = wildcard)
+        address handlerContractAddress;  // Contract with onEvent() to invoke
+        bytes4  handlerFunctionSelector; // Selector — always use onEvent.selector
+        uint64  priorityFeePerGas;       // Validator tip in wei. Minimum: 2_000_000_000 (2 gwei)
+        uint64  maxFeePerGas;            // Fee ceiling in wei. Minimum: 10_000_000_000 (10 gwei)
+        uint64  gasLimit;                // Max gas per invocation. Use 3_000_000 for complex handlers
+        bool    isGuaranteed;            // true = retry if block is full
+        bool    isCoalesced;             // true = batch multiple events per block
+    }
 
-    /// @notice Emitted when a contract successfully subscribes to an event.
-    /// @param subscriber The address of the contract that subscribed.
-    /// @param source The address of the contract whose event is being monitored.
-    /// @param eventSignature The `keccak256` hash of the event signature being tracked.
-    event Subscribed(address indexed subscriber, address indexed source, bytes32 indexed eventSignature);
+    /// @notice Creates a subscription. Returns the subscription ID.
+    /// @dev Caller (subscription owner) must hold >= 32 STT.
+    function subscribe(SubscriptionData calldata data) external returns (uint256 subscriptionId);
 
-    /*//////////////////////////////////////////////////////////////
-                         SUBSCRIPTION FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
+    /// @notice Cancels a subscription. Only callable by the subscription owner.
+    function unsubscribe(uint256 subscriptionId) external;
 
-    /// @notice Subscribes the calling contract to a specific event emitted by `contractAddress`.
-    /// @dev Once subscribed, the Somnia reactivity runtime will automatically invoke the
-    ///      appropriate callback on `msg.sender` whenever `contractAddress` emits the event
-    ///      matching `eventSignature`.
-    ///
-    ///      **Usage example — subscribing to yield-rate updates:**
-    ///      ```solidity
-    ///      reactivity.subscribe(
-    ///          yieldFarmAddress,
-    ///          keccak256("YieldUpdated(uint256,address)")
-    ///      );
-    ///      ```
-    ///
-    ///      After this call, whenever `yieldFarmAddress` emits `YieldUpdated`, the runtime
-    ///      will call `onYieldUpdated(newAPY, tokenAddress)` on the subscriber.
-    ///
-    /// @param contractAddress The address of the source contract whose events to monitor.
-    ///        Must be a deployed contract that emits the target event.
-    /// @param eventSignature The `keccak256` hash of the full event signature to listen for
-    ///        (e.g., `keccak256("YieldUpdated(uint256,address)")`).
-    function subscribe(address contractAddress, bytes32 eventSignature) external;
-
-    /*//////////////////////////////////////////////////////////////
-                          CALLBACK INTERFACE
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Callback invoked by the Somnia reactivity runtime when a subscribed
-    ///         yield-update event is detected.
-    /// @dev This function is called automatically — it should NOT be called by users or
-    ///      external contracts directly.
-    ///
-    ///      > [!WARNING]
-    ///      > **Implementors MUST validate `msg.sender`** to confirm the call originates
-    ///      > from the trusted Somnia reactivity runtime. Without this check, an attacker
-    ///      > can spoof callbacks with fabricated `newAPY` values, potentially causing the
-    ///      > optimizer to rebalance into unfavorable positions or execute swaps at
-    ///      > manipulated prices — a direct vector for fund extraction.
-    ///
-    ///      Implementations should keep callback logic lightweight to avoid exceeding the
-    ///      gas stipend provided by the reactivity runtime. Heavy operations (e.g., swaps)
-    ///      should be deferred to a separate transaction triggered by state set in this callback.
-    ///
-    /// @param newAPY The updated annual percentage yield, expressed in basis points
-    ///        (e.g., 500 = 5.00% APY). The Yield Optimizer uses this value to decide
-    ///        whether to rebalance across available farming strategies.
-    /// @param tokenAddress The address of the token whose yield was updated. Allows the
-    ///        optimizer to identify which vault or farming position the update pertains to.
-    function onYieldUpdated(uint256 newAPY, address tokenAddress) external;
+    /// @notice Returns the SubscriptionData and owner for a given subscription ID.
+    function getSubscriptionInfo(uint256 subscriptionId)
+        external view returns (SubscriptionData memory, address owner);
 }

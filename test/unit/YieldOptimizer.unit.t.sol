@@ -119,9 +119,13 @@ contract YieldOptimizerUnitTest is Test {
         vm.expectEmit(true, false, false, false, address(optimizer));
         emit OptimizerExecuted(address(farm), 0, 0);
 
-        // Call onYieldUpdated as the reactivity precompile
+        // Call onEvent as the reactivity precompile
+        bytes memory eventData = abi.encode(highAPY, address(farm));
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = keccak256("YieldUpdated(uint256,address)");
+
         vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
-        optimizer.onYieldUpdated(highAPY, address(farm));
+        optimizer.onEvent(address(yieldRelayer), topics, eventData);
 
         // --- Assert ---
 
@@ -159,9 +163,13 @@ contract YieldOptimizerUnitTest is Test {
         vm.txGasPrice(100 gwei);
 
         // --- Act ---
-        // Call onYieldUpdated as the reactivity precompile — should return gracefully
+        // Call onEvent as the reactivity precompile — should return gracefully
+        bytes memory eventData = abi.encode(tinyAPY, address(farm));
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = keccak256("YieldUpdated(uint256,address)");
+
         vm.prank(SOMNIA_REACTIVITY_PRECOMPILE);
-        optimizer.onYieldUpdated(tinyAPY, address(farm));
+        optimizer.onEvent(address(yieldRelayer), topics, eventData);
 
         // --- Assert ---
 

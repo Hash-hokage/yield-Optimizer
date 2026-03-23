@@ -11,10 +11,15 @@ import {MockYieldFarm} from "../src/mocks/MockYieldFarm.sol";
 import {IDEXRouter} from "../src/interfaces/IDEXRouter.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+import {ISomniaReactivityPrecompile} from "../src/interfaces/ISomniaReactivity.sol";
+
 /// @title MockPrecompile
 /// @notice Dummy contract deployed via `vm.etch` to the Somnia Reactivity Precompile
 ///         address so the `DeployCore` script's `subscribe` call does not revert.
 contract MockPrecompile {
+    function subscribe(ISomniaReactivityPrecompile.SubscriptionData calldata) external returns (uint256) {
+        return 1;
+    }
     fallback() external payable {}
 }
 
