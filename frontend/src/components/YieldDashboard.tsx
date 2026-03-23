@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import {
   Activity,
   TrendingUp,
+  TrendingUp as TrendingUpIcon,
   DollarSign,
   ShieldCheck,
   Sparkles,
@@ -108,11 +109,29 @@ function shortenAddress(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
 
+// Map known farm addresses to human-readable names.
+// Add entries here when new farms are whitelisted.
+const FARM_NAMES: Record<string, string> = {
+  [process.env.NEXT_PUBLIC_MOCK_FARM_ADDRESS?.toLowerCase() ?? '']: 'MockYieldFarm (TGT)',
+}
+
+function getFarmLabel(addr: string): string {
+  if (!addr || addr === '0x0000000000000000000000000000000000000000') return 'None'
+  const name = FARM_NAMES[addr.toLowerCase()]
+  return name ? `${name}` : shortenAddress(addr)
+}
+
+function getFarmSublabel(addr: string): string | null {
+  if (!addr || addr === '0x0000000000000000000000000000000000000000') return null
+  const name = FARM_NAMES[addr.toLowerCase()]
+  return name ? shortenAddress(addr) : null
+}
+
 /* ═════════════════════════════════════════
    Main Dashboard Component
    ═════════════════════════════════════════ */
 export default function YieldDashboard() {
-  const { cumulativeLoss, maxLossThreshold, isPaused, tvl, currentFarm, ...optimizer } = useYieldOptimizer();
+  const { cumulativeLoss, maxLossThreshold, isPaused, tvl, currentFarm, currentAPYBps, ...optimizer } = useYieldOptimizer();
   const isLoggedIn = !!optimizer.address;
 
   const [amount, setAmount] = useState("");
@@ -120,6 +139,10 @@ export default function YieldDashboard() {
   // Real-time parsed formatted values
   const displayUsdc = optimizer.usdcBalance ? formatUnits(optimizer.usdcBalance as bigint, 6) : "0";
   const displayShares = optimizer.userShares ? formatUnits(optimizer.userShares as bigint, 6) : "0";
+  
+  const displayAPY = currentAPYBps
+    ? `${(Number(currentAPYBps as bigint) / 100).toFixed(2)}%`
+    : '—'
   
   // Deposit Math
   const depositValueBigInt = amount ? parseUnits(amount, 6) : BigInt(0);
@@ -177,16 +200,38 @@ export default function YieldDashboard() {
                 initial="hidden"
                 animate="visible"
               >
+                {/* Active Farm row — custom to support address sublabel */}
+                <motion.div
+                  variants={itemVariants}
+                  className="flex items-center justify-between py-3.5 border-b border-zinc-800/40"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-800/60 ring-1 ring-zinc-700/40">
+                      <Activity className={`h-4 w-4 text-cyan-400`} />
+                    </div>
+                    <span className="text-sm text-zinc-400">Active Farm</span>
+                  </div>
+                  {currentFarm === undefined ? (
+                    <Skeleton className="h-5 w-24" />
+                  ) : (
+                    <div className="text-right">
+                      <span className="text-sm font-semibold text-zinc-100 font-mono">
+                        {getFarmLabel(currentFarm as string)}
+                      </span>
+                      {getFarmSublabel(currentFarm as string) && (
+                        <p className="text-[11px] text-zinc-600 font-mono mt-0.5">
+                          {getFarmSublabel(currentFarm as string)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </motion.div>
                 <StatRow
-                  icon={Activity}
-                  label="Active Farm (On-Chain)"
-                  value={
-                    currentFarm && currentFarm !== '0x0000000000000000000000000000000000000000'
-                      ? shortenAddress(currentFarm as string)
-                      : 'No farm deployed'
-                  }
-                  isLoading={currentFarm === undefined}
-                  accent="text-cyan-400"
+                  icon={TrendingUpIcon}
+                  label="Current Farm APY"
+                  value={displayAPY}
+                  isLoading={currentAPYBps === undefined}
+                  accent="text-yellow-400"
                 />
                 <StatRow
                   icon={TrendingUp}
@@ -253,7 +298,13 @@ export default function YieldDashboard() {
                   >
                     <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-700"
+                        className={`h-full rounded-full transition-all duration-700 ${(() => {
+                          if (!maxLossThreshold || !cumulativeLoss) return 'bg-gradient-to-r from-emerald-500 to-emerald-400'
+                          const pct = Number((cumulativeLoss as bigint) * BigInt(100) / (maxLossThreshold as bigint))
+                          if (pct > 75) return 'bg-gradient-to-r from-red-500 to-orange-400'
+                          if (pct > 40) return 'bg-gradient-to-r from-yellow-500 to-amber-400'
+                          return 'bg-gradient-to-r from-emerald-500 to-emerald-400'
+                        })()}`}
                         style={{
                           width: maxLossThreshold && cumulativeLoss
                             ? `${Math.min(100, Number((cumulativeLoss as bigint) * BigInt(100) / (maxLossThreshold as bigint)))}%`
@@ -380,6 +431,48 @@ export default function YieldDashboard() {
                 </motion.div>
               )}
 
+              {/* ── Step indicator — only shown when a deposit flow is active ── */}
+              {isLoggedIn && amount && (
+                <div className="flex items-center gap-2">
+                  {/* Step 1 */}
+                  <div className="flex items-center gap-1.5">
+                    <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold transition-colors duration-300 ${
+                      !needsApproval
+                        ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30'
+                        : 'bg-zinc-800 text-zinc-400 ring-1 ring-zinc-700/50'
+                    }`}>
+                      {!needsApproval ? '✓' : '1'}
+                    </div>
+                    <span className={`text-xs transition-colors duration-300 ${
+                      !needsApproval ? 'text-emerald-400' : 'text-zinc-400'
+                    }`}>
+                      Approve
+                    </span>
+                  </div>
+
+                  {/* Connector */}
+                  <div className={`h-px flex-1 transition-colors duration-500 ${
+                    !needsApproval ? 'bg-emerald-500/40' : 'bg-zinc-800'
+                  }`} />
+
+                  {/* Step 2 */}
+                  <div className="flex items-center gap-1.5">
+                    <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold transition-colors duration-300 ${
+                      !needsApproval
+                        ? 'bg-emerald-500 text-zinc-950 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
+                        : 'bg-zinc-800 text-zinc-600 ring-1 ring-zinc-700/50'
+                    }`}>
+                      2
+                    </div>
+                    <span className={`text-xs transition-colors duration-300 ${
+                      !needsApproval ? 'text-zinc-100 font-medium' : 'text-zinc-600'
+                    }`}>
+                      Deposit
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* ── CTA Button ── */}
               <Button
                 variant="glow"
@@ -429,10 +522,18 @@ export default function YieldDashboard() {
                 </Button>
               </div>
 
-              {/* ── Powered by badge ── */}
-              <p className="text-center text-[11px] text-zinc-600">
-                Powered by Somnia Reactivity
-              </p>
+              {/* ── Powered by Somnia badge ── */}
+              <div className="flex items-center justify-center gap-2 pt-1">
+                <div className="h-px flex-1 bg-zinc-800/60" />
+                <span className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-500">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-50" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  </span>
+                  Powered by Somnia Reactivity
+                </span>
+                <div className="h-px flex-1 bg-zinc-800/60" />
+              </div>
             </CardContent>
           </Card>
         </motion.div>

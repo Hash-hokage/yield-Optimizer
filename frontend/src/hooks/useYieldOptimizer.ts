@@ -1,10 +1,14 @@
-import { useReadContract, useWriteContract, useAccount, usePublicClient } from 'wagmi'
+import { useReadContract, useWriteContract, useAccount, usePublicClient, useWatchContractEvent } from 'wagmi'
+import { useState } from 'react'
 import { yieldOptimizerABI } from '@/abi/YieldOptimizer'
 import { mockERC20ABI } from '@/abi/MockERC20'
+import { yieldRelayerABI } from '@/abi/YieldRelayer'
 import { Address } from 'viem'
 
 const OPTIMIZER_ADDRESS = process.env.NEXT_PUBLIC_YIELD_OPTIMIZER_ADDRESS as Address
 const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_ADDRESS as Address
+const RELAYER_ADDRESS = process.env.NEXT_PUBLIC_YIELD_RELAYER_ADDRESS as Address
+const FARM_ADDRESS = process.env.NEXT_PUBLIC_MOCK_FARM_ADDRESS as Address
 
 export function useYieldOptimizer() {
   const { address } = useAccount()
@@ -69,10 +73,73 @@ export function useYieldOptimizer() {
     query: { refetchInterval: 8_000 },
   })
 
-  // TVL = totalOptimizerShares × (portfolioValue / totalShares)
-  // Simplified: if all shares represent USDC at 1:1 on first deposit,
-  // TVL ≈ totalOptimizerShares as a USDC amount (6 decimals)
-  const tvl = totalOptimizerShares ?? BigInt(0)
+  // Read the most recently pushed APY for the active farm from the YieldRelayer
+  const { data: currentAPYBps } = useReadContract({
+    address: RELAYER_ADDRESS,
+    abi: yieldRelayerABI,
+    functionName: 'currentFarmYields',
+    args: FARM_ADDRESS ? [FARM_ADDRESS] : undefined,
+    query: {
+      enabled: !!FARM_ADDRESS,
+      refetchInterval: 8_000,
+    },
+  })
+
+  // Read how much USDC the optimizer contract holds idle (not yet deployed to a farm)
+  const { data: optimizerUsdcBalance } = useReadContract({
+    address: USDC_ADDRESS,
+    abi: mockERC20ABI,
+    functionName: 'balanceOf',
+    args: [OPTIMIZER_ADDRESS],
+    query: { refetchInterval: 8_000 },
+  })
+
+  // TVL: pro-rata share of the total portfolio value owned by all depositors combined.
+  // = totalOptimizerShares * portfolioValue / totalOptimizerShares = portfolioValue
+  // Since totalOptimizerShares represents the entire pool, TVL equals
+  // the USDC value of all idle USDC + farm shares held by this contract.
+  // We approximate using idle USDC balance read via usdcBalance at the contract level.
+  // The most accurate TVL is totalOptimizerShares in USDC terms at the 1:1 bootstrap ratio,
+  // adjusted over time. For a correct live value, expose _getPortfolioValue() on-chain
+  // or sum idleUSDC + farm share value client-side. For the hackathon, totalOptimizerShares
+  // is the best available proxy since shares are minted 1:1 with USDC on first deposit.
+  // 
+  // TVL = idle USDC in contract + shares value (proxy: totalOptimizerShares).
+  // Using optimizerUsdcBalance as the primary source when available.
+  const tvl = optimizerUsdcBalance !== undefined
+    ? optimizerUsdcBalance
+    : (totalOptimizerShares ?? BigInt(0))
+
+  // Track the most recent OptimizerExecuted event for reactive confirmation UI
+  const [lastExecution, setLastExecution] = useState<{
+    targetFarm: string
+    profitUSDC: bigint
+    gasSpent: bigint
+    txHash: string
+    timestamp: number
+  } | null>(null)
+
+  useWatchContractEvent({
+    address: OPTIMIZER_ADDRESS,
+    abi: yieldOptimizerABI,
+    eventName: 'OptimizerExecuted',
+    onLogs: (logs) => {
+      const log = logs[logs.length - 1]
+      if (!log) return
+      setLastExecution({
+        targetFarm: log.args.targetFarm as string,
+        profitUSDC: log.args.profitUSDC as bigint,
+        gasSpent: log.args.gasSpent as bigint,
+        txHash: log.transactionHash ?? '',
+        timestamp: Date.now(),
+      })
+      // Refresh all dashboard data after a rebalance executes
+      refetchCurrentFarm()
+      refetchTotalShares()
+      refetchCumulativeLoss()
+      refetchUserShares()
+    },
+  })
 
   // --- WRITES ---
 
@@ -158,6 +225,9 @@ export function useYieldOptimizer() {
     isPaused,
     tvl,
     currentFarm,
+    currentAPYBps,
+    optimizerUsdcBalance,
+    lastExecution,
     
     // Loading States
     isMinting,

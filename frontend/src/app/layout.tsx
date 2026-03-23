@@ -1,18 +1,14 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+// Font removed due to Google Fonts network timeout during build
+// import { Inter } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
 import { Providers } from "@/components/Providers";
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-});
-
 export const metadata: Metadata = {
   title: "Somnia Yield Optimizer — Testnet",
   description:
-    "Auto-rebalance across Somnia farms with gasless ERC-4337 transactions. Powered by reactive smart contracts.",
+    "Autonomous yield rebalancing across Somnia Testnet farms, powered by Somnia's native on-chain reactivity — no polling, no manual execution.",
 };
 
 export default function RootLayout({
@@ -23,7 +19,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${inter.variable} font-sans bg-zinc-950 text-zinc-100 antialiased`}
+        className="font-sans bg-zinc-950 text-zinc-100 antialiased"
       >
         {/* Subtle grid texture overlay */}
         <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,_rgba(16,185,129,0.04)_0%,_transparent_50%)]" />
