@@ -183,6 +183,5 @@ contract YieldOptimizerUnitTest is Test {
 
         // 3. currentFarm remains unset
         assertEq(optimizer.currentFarm(), address(0), "currentFarm should remain address(0)");
-
     }
 }

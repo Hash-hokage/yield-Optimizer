@@ -9,7 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import { SomniaEventHandler } from "@somnia-chain/reactivity-contracts/contracts/SomniaEventHandler.sol";
+import {SomniaEventHandler} from "@somnia-chain/reactivity-contracts/contracts/SomniaEventHandler.sol";
 
 /// @title YieldOptimizer
 /// @author Hash-Hokage
@@ -47,8 +47,6 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     /// @dev Reverted when the contract is paused by the RiskGuard.
     error YieldOptimizer__Paused();
 
-
-
     /// @dev Reverted when a user tries to withdraw more shares than they hold.
     error YieldOptimizer__InsufficientShares();
 
@@ -58,8 +56,6 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                      NETWORK ADDRESSES (IMMUTABLE)
     //////////////////////////////////////////////////////////////*/
-
-
 
     /// @notice The address of the USDC token used as the base denomination for all operations.
     address public immutable usdc;
@@ -200,9 +196,7 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     /// @param _yieldRelayer The address of the relayer whose `YieldUpdated` events are trusted.
     /// @param _router The Uniswap V2-style DEX router for executing swaps.
     /// @param _maxLossThreshold The maximum cumulative loss (in USDC) before RiskGuard pauses operations.
-    constructor(address _usdc, address _yieldRelayer, address _router, uint256 _maxLossThreshold)
-        Ownable(msg.sender)
-    {
+    constructor(address _usdc, address _yieldRelayer, address _router, uint256 _maxLossThreshold) Ownable(msg.sender) {
         usdc = _usdc;
         yieldRelayer = _yieldRelayer;
         router = IDEXRouter(_router);
@@ -305,11 +299,11 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     /// @param emitter     The contract that emitted the event (should be yieldRelayer).
     /// @param eventTopics The event's topics array. [0] is the event signature hash.
     /// @param data        ABI-encoded event parameters: abi.encode(uint256 newAPY, address targetFarm).
-    function _onEvent(
-        address emitter,
-        bytes32[] calldata eventTopics,
-        bytes calldata data
-    ) internal override nonReentrant {
+    function _onEvent(address emitter, bytes32[] calldata eventTopics, bytes calldata data)
+        internal
+        override
+        nonReentrant
+    {
         // --- 1. Validate the event source is our trusted relayer ---
         if (emitter != yieldRelayer) return; // Silently ignore events from other contracts
 
@@ -345,8 +339,7 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
 
         // --- 9. Execute the rebalance ---
         uint256 gasAtStart = gasleft();
-        (uint256 profitUSDC, uint256 gasUsed, , uint256 portfolioAfter) =
-            _executeRebalance(targetFarm, portfolioBefore);
+        (uint256 profitUSDC, uint256 gasUsed,, uint256 portfolioAfter) = _executeRebalance(targetFarm, portfolioBefore);
         uint256 totalGasUsed = gasUsed + (gasAtStart - gasleft());
 
         emit OptimizerExecuted(targetFarm, profitUSDC, totalGasUsed);
@@ -374,28 +367,21 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     function createReactivitySubscription(uint64 handlerGasLimit) external onlyOwner {
         require(subscriptionId == 0, "YieldOptimizer: already subscribed");
 
-        ISomniaReactivityPrecompile.SubscriptionData memory subData =
-            ISomniaReactivityPrecompile.SubscriptionData({
-                eventTopics: [
-                    keccak256("YieldUpdated(uint256,address)"),
-                    bytes32(0),
-                    bytes32(0),
-                    bytes32(0)
-                ],
-                origin:                  address(0),   // wildcard
-                caller:                  address(0),   // wildcard
-                emitter:                 yieldRelayer, // only watch our relayer
-                handlerContractAddress:  address(this),
-                handlerFunctionSelector: this.onEvent.selector,
-                priorityFeePerGas:       2_000_000_000,  // 2 gwei — Somnia minimum
-                maxFeePerGas:            10_000_000_000, // 10 gwei — Somnia minimum
-                gasLimit:                handlerGasLimit,
-                isGuaranteed:            true,
-                isCoalesced:             false
-            });
+        ISomniaReactivityPrecompile.SubscriptionData memory subData = ISomniaReactivityPrecompile.SubscriptionData({
+            eventTopics: [keccak256("YieldUpdated(uint256,address)"), bytes32(0), bytes32(0), bytes32(0)],
+            origin: address(0), // wildcard
+            caller: address(0), // wildcard
+            emitter: yieldRelayer, // only watch our relayer
+            handlerContractAddress: address(this),
+            handlerFunctionSelector: this.onEvent.selector,
+            priorityFeePerGas: 2_000_000_000, // 2 gwei — Somnia minimum
+            maxFeePerGas: 10_000_000_000, // 10 gwei — Somnia minimum
+            gasLimit: handlerGasLimit,
+            isGuaranteed: true,
+            isCoalesced: false
+        });
 
-        ISomniaReactivityPrecompile precompile =
-            ISomniaReactivityPrecompile(0x0000000000000000000000000000000000000100);
+        ISomniaReactivityPrecompile precompile = ISomniaReactivityPrecompile(0x0000000000000000000000000000000000000100);
 
         subscriptionId = precompile.subscribe(subData);
     }
@@ -404,8 +390,7 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     /// @dev Only callable by the owner. Sets subscriptionId to 0.
     function cancelReactivitySubscription() external onlyOwner {
         require(subscriptionId != 0, "YieldOptimizer: no active subscription");
-        ISomniaReactivityPrecompile(0x0000000000000000000000000000000000000100)
-            .unsubscribe(subscriptionId);
+        ISomniaReactivityPrecompile(0x0000000000000000000000000000000000000100).unsubscribe(subscriptionId);
         subscriptionId = 0;
     }
 
@@ -540,11 +525,7 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
     /// @param  amount     The USDC amount to estimate slippage for.
     /// @param  targetAsset The token address of the farm's underlying asset.
     /// @return slippageUSDC The estimated slippage cost in USDC (6 decimals).
-    function _estimateLiveSlippage(uint256 amount, address targetAsset)
-        internal
-        view
-        returns (uint256 slippageUSDC)
-    {
+    function _estimateLiveSlippage(uint256 amount, address targetAsset) internal view returns (uint256 slippageUSDC) {
         if (amount == 0 || targetAsset == usdc) {
             return 0;
         }
@@ -566,9 +547,7 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
             // Use a small probe amount (1 token unit) to get the spot rate
             uint256 probeAmount = 10 ** 6; // 1 unit in 6-decimal precision
 
-            try router.getAmountsOut(probeAmount, probeReversePath)
-                returns (uint256[] memory probeAmounts)
-            {
+            try router.getAmountsOut(probeAmount, probeReversePath) returns (uint256[] memory probeAmounts) {
                 if (probeAmounts.length < 2 || probeAmounts[1] == 0) return 0;
 
                 // Implied USDC value of the received targetAsset tokens, using spot rate
@@ -600,7 +579,10 @@ contract YieldOptimizer is SomniaEventHandler, Ownable, ReentrancyGuard {
         require(_newEstimate > 0, "YieldOptimizer: gas estimate must be > 0");
         emit GasOverheadUpdated(gasOverheadEstimate, _newEstimate);
         gasOverheadEstimate = _newEstimate;
-    }    /// @notice Updates the maximum cumulative loss threshold for the RiskGuard.
+    }
+
+    /// @notice Updates the maximum cumulative loss threshold for the RiskGuard.
+
     /// @dev    Only used for testing and post-deployment tuning. Lowering this threshold
     ///         while `cumulativeLoss` is already near it will trip the circuit breaker.
     /// @param _newThreshold New threshold in USDC (6 decimals).
