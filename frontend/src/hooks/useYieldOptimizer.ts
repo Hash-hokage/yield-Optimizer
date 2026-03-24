@@ -152,14 +152,28 @@ export function useYieldOptimizer() {
 
   const handleMintTestUSDC = async (amount: bigint) => {
     if (!address || !publicClient) return
-    const hash = await mintTestUSDC({
-      address: USDC_ADDRESS,
-      abi: mockERC20ABI,
-      functionName: 'mint',
-      args: [address, amount],
-    })
-    await publicClient.waitForTransactionReceipt({ hash })
-    await refetchUsdcBalance()
+    
+    if (!USDC_ADDRESS || USDC_ADDRESS === "0x0000000000000000000000000000000000000000") {
+      console.error("DEBUG: USDC_ADDRESS is undefined or zero address. Check environment variables.");
+      alert("Error: USDC Contract Address is missing. Please check your Vercel environment variables.");
+      return;
+    }
+
+    console.log(`DEBUG: Attempting to mint ${amount} units at USDC address: ${USDC_ADDRESS}`);
+
+    try {
+      const hash = await mintTestUSDC({
+        address: USDC_ADDRESS,
+        abi: mockERC20ABI,
+        functionName: 'mint',
+        args: [address, amount],
+      })
+      await publicClient.waitForTransactionReceipt({ hash })
+      await refetchUsdcBalance()
+    } catch (err) {
+      console.error("DEBUG: Minting failed:", err);
+      throw err;
+    }
   }
 
   const handleApproveUSDC = async (amount: bigint) => {
