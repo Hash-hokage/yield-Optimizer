@@ -7,8 +7,9 @@ evm_version = "cancun"
 via_ir = true
 optimizer = true
 optimizer_runs = 200
-skip = ["node_modules/**"]
+skip = ["node_modules"]
 remappings = [
+  "@somnia-chain/reactivity-contracts/contracts/SomniaEventHandler.sol=src/vendor/SomniaEventHandler.sol",
   "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
   "@somnia-chain/reactivity-contracts/=node_modules/@somnia-chain/reactivity-contracts/"
 ]
@@ -22,12 +23,12 @@ evm_version = "cancun"
 via_ir = true
 optimizer = true
 optimizer_runs = 200
-skip = ["node_modules/**"]
+skip = ["node_modules"]
 remappings = [
+  "@somnia-chain/reactivity-contracts/contracts/SomniaEventHandler.sol=src/vendor/SomniaEventHandler.sol",
   "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
   "@somnia-chain/reactivity-contracts/=node_modules/@somnia-chain/reactivity-contracts/"
 ]
 
 [fuzz]
 runs = 512
-
