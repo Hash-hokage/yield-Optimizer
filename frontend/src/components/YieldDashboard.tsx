@@ -1,11 +1,11 @@
 "use client";
 
+import type { useYieldOptimizer } from "@/hooks/useYieldOptimizer";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Activity,
   TrendingUp,
-  TrendingUp as TrendingUpIcon,
   DollarSign,
   ShieldCheck,
   Sparkles,
@@ -19,7 +19,6 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useYieldOptimizer } from "@/hooks/useYieldOptimizer";
 import { parseUnits, formatUnits } from "viem";
 
 /* ─────────────────────────────────────────
@@ -112,7 +111,9 @@ function shortenAddress(addr: string): string {
 // Map known farm addresses to human-readable names.
 // Add entries here when new farms are whitelisted.
 const FARM_NAMES: Record<string, string> = {
-  [process.env.NEXT_PUBLIC_MOCK_FARM_ADDRESS?.toLowerCase() ?? '']: 'MockYieldFarm (TGT)',
+  ...(process.env.NEXT_PUBLIC_MOCK_FARM_ADDRESS
+    ? { [process.env.NEXT_PUBLIC_MOCK_FARM_ADDRESS.toLowerCase()]: 'MockYieldFarm (TGT)' }
+    : {}),
 }
 
 function getFarmLabel(addr: string): string {
@@ -130,8 +131,8 @@ function getFarmSublabel(addr: string): string | null {
 /* ═════════════════════════════════════════
    Main Dashboard Component
    ═════════════════════════════════════════ */
-export default function YieldDashboard() {
-  const { cumulativeLoss, maxLossThreshold, isPaused, tvl, currentFarm, currentAPYBps, ...optimizer } = useYieldOptimizer();
+export default function YieldDashboard({ data }: { data: ReturnType<typeof useYieldOptimizer> }) {
+  const { cumulativeLoss, maxLossThreshold, isPaused, tvl, currentFarm, currentAPYBps, ...optimizer } = data;
   const isLoggedIn = !!optimizer.address;
 
   const [amount, setAmount] = useState("");
@@ -139,11 +140,11 @@ export default function YieldDashboard() {
   // Real-time parsed formatted values
   const displayUsdc = optimizer.usdcBalance ? formatUnits(optimizer.usdcBalance as bigint, 6) : "0";
   const displayShares = optimizer.userShares ? formatUnits(optimizer.userShares as bigint, 6) : "0";
-  
+
   const displayAPY = currentAPYBps
     ? `${(Number(currentAPYBps as bigint) / 100).toFixed(2)}%`
     : '—'
-  
+
   // Deposit Math
   const depositValueBigInt = amount ? parseUnits(amount, 6) : BigInt(0);
   const currentAllowance = (optimizer.usdcAllowance as bigint) || BigInt(0);
@@ -151,7 +152,7 @@ export default function YieldDashboard() {
 
   const handleOptimize = async () => {
     if (!depositValueBigInt || !isLoggedIn) return;
-    
+
     if (needsApproval) {
       await optimizer.handleApproveUSDC(depositValueBigInt);
     } else {
@@ -227,7 +228,7 @@ export default function YieldDashboard() {
                   )}
                 </motion.div>
                 <StatRow
-                  icon={TrendingUpIcon}
+                  icon={TrendingUp}
                   label="Current Farm APY"
                   value={displayAPY}
                   isLoading={currentAPYBps === undefined}
@@ -259,20 +260,19 @@ export default function YieldDashboard() {
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">RiskGuard</CardTitle>
-                  <motion.div
-                    initial={{ scale: 0.8, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ delay: 0.3 }}
-                  >
-                    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${
-                      isPaused
-                        ? 'bg-red-500/10 text-red-400 ring-red-500/20'
-                        : 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/20'
+                <motion.div
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ delay: 0.3 }}
+                >
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${isPaused
+                    ? 'bg-red-500/10 text-red-400 ring-red-500/20'
+                    : 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/20'
                     }`}>
-                      <ShieldCheck className="h-3 w-3" />
-                      {isPaused ? 'Paused' : 'Active'}
-                    </span>
-                  </motion.div>
+                    <ShieldCheck className="h-3 w-3" />
+                    {isPaused ? 'Paused' : 'Active'}
+                  </span>
+                </motion.div>
               </div>
             </CardHeader>
             <CardContent>
@@ -290,29 +290,29 @@ export default function YieldDashboard() {
                   </span>
                 </div>
                 {/* Progress bar */}
-                  <motion.div
-                    initial={{ scaleX: 0 }}
-                    animate={{ scaleX: 1 }}
-                    transition={{ delay: 0.4, duration: 0.6 }}
-                    className="origin-left"
-                  >
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
-                      <div
-                        className={`h-full rounded-full transition-all duration-700 ${(() => {
-                          if (!maxLossThreshold || !cumulativeLoss) return 'bg-gradient-to-r from-emerald-500 to-emerald-400'
-                          const pct = Number((cumulativeLoss as bigint) * BigInt(100) / (maxLossThreshold as bigint))
-                          if (pct > 75) return 'bg-gradient-to-r from-red-500 to-orange-400'
-                          if (pct > 40) return 'bg-gradient-to-r from-yellow-500 to-amber-400'
-                          return 'bg-gradient-to-r from-emerald-500 to-emerald-400'
-                        })()}`}
-                        style={{
-                          width: maxLossThreshold && cumulativeLoss
-                            ? `${Math.min(100, Number((cumulativeLoss as bigint) * BigInt(100) / (maxLossThreshold as bigint)))}%`
-                            : '0%'
-                        }}
-                      />
-                    </div>
-                  </motion.div>
+                <motion.div
+                  initial={{ scaleX: 0 }}
+                  animate={{ scaleX: 1 }}
+                  transition={{ delay: 0.4, duration: 0.6 }}
+                  className="origin-left"
+                >
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ${(() => {
+                        if (!maxLossThreshold || !cumulativeLoss) return 'bg-gradient-to-r from-emerald-500 to-emerald-400'
+                        const pct = Number((cumulativeLoss as bigint) * BigInt(100) / (maxLossThreshold as bigint))
+                        if (pct > 75) return 'bg-gradient-to-r from-red-500 to-orange-400'
+                        if (pct > 40) return 'bg-gradient-to-r from-yellow-500 to-amber-400'
+                        return 'bg-gradient-to-r from-emerald-500 to-emerald-400'
+                      })()}`}
+                      style={{
+                        width: maxLossThreshold && cumulativeLoss
+                          ? `${Math.min(100, Number((cumulativeLoss as bigint) * BigInt(100) / (maxLossThreshold as bigint)))}%`
+                          : '0%'
+                      }}
+                    />
+                  </div>
+                </motion.div>
               </div>
             </CardContent>
           </Card>
@@ -436,37 +436,32 @@ export default function YieldDashboard() {
                 <div className="flex items-center gap-2">
                   {/* Step 1 */}
                   <div className="flex items-center gap-1.5">
-                    <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold transition-colors duration-300 ${
-                      !needsApproval
-                        ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30'
-                        : 'bg-zinc-800 text-zinc-400 ring-1 ring-zinc-700/50'
-                    }`}>
+                    <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold transition-colors duration-300 ${!needsApproval
+                      ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30'
+                      : 'bg-zinc-800 text-zinc-400 ring-1 ring-zinc-700/50'
+                      }`}>
                       {!needsApproval ? '✓' : '1'}
                     </div>
-                    <span className={`text-xs transition-colors duration-300 ${
-                      !needsApproval ? 'text-emerald-400' : 'text-zinc-400'
-                    }`}>
+                    <span className={`text-xs transition-colors duration-300 ${!needsApproval ? 'text-emerald-400' : 'text-zinc-400'
+                      }`}>
                       Approve
                     </span>
                   </div>
 
                   {/* Connector */}
-                  <div className={`h-px flex-1 transition-colors duration-500 ${
-                    !needsApproval ? 'bg-emerald-500/40' : 'bg-zinc-800'
-                  }`} />
+                  <div className={`h-px flex-1 transition-colors duration-500 ${!needsApproval ? 'bg-emerald-500/40' : 'bg-zinc-800'
+                    }`} />
 
                   {/* Step 2 */}
                   <div className="flex items-center gap-1.5">
-                    <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold transition-colors duration-300 ${
-                      !needsApproval
-                        ? 'bg-emerald-500 text-zinc-950 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
-                        : 'bg-zinc-800 text-zinc-600 ring-1 ring-zinc-700/50'
-                    }`}>
+                    <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold transition-colors duration-300 ${!needsApproval
+                      ? 'bg-emerald-500 text-zinc-950 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
+                      : 'bg-zinc-800 text-zinc-600 ring-1 ring-zinc-700/50'
+                      }`}>
                       2
                     </div>
-                    <span className={`text-xs transition-colors duration-300 ${
-                      !needsApproval ? 'text-zinc-100 font-medium' : 'text-zinc-600'
-                    }`}>
+                    <span className={`text-xs transition-colors duration-300 ${!needsApproval ? 'text-zinc-100 font-medium' : 'text-zinc-600'
+                      }`}>
                       Deposit
                     </span>
                   </div>

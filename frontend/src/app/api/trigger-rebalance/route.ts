@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { ethers } from "ethers";
 import { yieldRelayerABI } from "@/abi/YieldRelayer";
-import fs from "fs";
-import path from "path";
 
 /**
  * POST /api/trigger-rebalance
@@ -34,8 +32,14 @@ export async function POST() {
     }
 
     /* ── 2. Read encrypted keystore from disk ── */
-    const keystorePath = path.resolve(process.cwd(), "keystore.json");
-    const keystoreData = fs.readFileSync(keystorePath, "utf-8");
+    const keystoreBase64 = process.env.KEYSTORE_JSON_BASE64;
+    if (!keystoreBase64) {
+      return NextResponse.json(
+        { success: false, error: "KEYSTORE_JSON_BASE64 is not set" },
+        { status: 500 }
+      );
+    }
+    const keystoreData = Buffer.from(keystoreBase64, "base64").toString("utf-8");
 
     /* ── 3. Decrypt wallet in memory ── */
     const wallet = await ethers.Wallet.fromEncryptedJson(keystoreData, password);

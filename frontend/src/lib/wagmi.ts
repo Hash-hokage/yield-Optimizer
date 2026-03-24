@@ -6,7 +6,10 @@ export const somniaTestnet = defineChain({
   name: 'Somnia Testnet',
   nativeCurrency: { name: 'Somnia Testnet Token', symbol: 'STT', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://api.infra.testnet.somnia.network'] },
+    default: {
+      http: ['https://api.infra.testnet.somnia.network'],
+      webSocket: ['wss://api.infra.testnet.somnia.network/ws'],
+    },
   },
   blockExplorers: {
     default: { name: 'Somnia Explorer', url: 'https://shannon-explorer.somnia.network' },

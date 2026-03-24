@@ -6,14 +6,16 @@ import { Rocket, CheckCircle, XCircle, ExternalLink, Zap, Loader2 } from "lucide
 import { useYieldOptimizer } from "@/hooks/useYieldOptimizer";
 import { formatUnits } from "viem";
 
-export function DemoButton() {
+export function DemoButton({ lastExecution }: {
+  lastExecution: ReturnType<typeof useYieldOptimizer>['lastExecution']
+}) {
   const [isLoading, setIsLoading] = useState(false);
   const [relayerTxHash, setRelayerTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [apyBps, setApyBps] = useState<number | null>(null);
   const [waitingForReactive, setWaitingForReactive] = useState(false);
+  const [reactiveTimedOut, setReactiveTimedOut] = useState(false);
 
-  const { lastExecution } = useYieldOptimizer();
 
   // When lastExecution updates after we triggered a rebalance, clear the waiting state
   const [triggerTime, setTriggerTime] = useState<number | null>(null);
@@ -28,6 +30,7 @@ export function DemoButton() {
     setError(null);
     setApyBps(null);
     setWaitingForReactive(false);
+    setReactiveTimedOut(false);
 
     try {
       const response = await fetch("/api/trigger-rebalance", { method: "POST" });
@@ -39,6 +42,11 @@ export function DemoButton() {
       setApyBps(data.apy);
       setTriggerTime(Date.now());
       setWaitingForReactive(true);
+      // Time out after 30 seconds if reactive callback hasn't fired
+      setTimeout(() => {
+        setReactiveTimedOut(true);
+        setWaitingForReactive(false);
+      }, 30_000);
     } catch (err: unknown) {
       const e = err as { message?: string };
       setError(e.message || "An unexpected error occurred");
@@ -73,11 +81,10 @@ export function DemoButton() {
         {/* Two-step flow visual */}
         <div className="w-full grid grid-cols-2 gap-2">
           {/* Step 1 */}
-          <div className={`rounded-xl p-3 border transition-colors duration-500 ${
-            relayerTxHash
+          <div className={`rounded-xl p-3 border transition-colors duration-500 ${relayerTxHash
               ? "border-emerald-500/30 bg-emerald-500/5"
               : "border-zinc-800/60 bg-zinc-800/20"
-          }`}>
+            }`}>
             <div className="flex items-center gap-2 mb-1">
               {relayerTxHash
                 ? <CheckCircle className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
@@ -91,19 +98,18 @@ export function DemoButton() {
           </div>
 
           {/* Step 2 */}
-          <div className={`rounded-xl p-3 border transition-colors duration-500 ${
-            reactiveConfirmed
+          <div className={`rounded-xl p-3 border transition-colors duration-500 ${reactiveConfirmed
               ? "border-violet-500/30 bg-violet-500/5"
               : waitingForReactive
-              ? "border-zinc-700/60 bg-zinc-800/20 animate-pulse"
-              : "border-zinc-800/60 bg-zinc-800/20"
-          }`}>
+                ? "border-zinc-700/60 bg-zinc-800/20 animate-pulse"
+                : "border-zinc-800/60 bg-zinc-800/20"
+            }`}>
             <div className="flex items-center gap-2 mb-1">
               {reactiveConfirmed
                 ? <Zap className="h-3.5 w-3.5 text-violet-400 shrink-0" />
                 : waitingForReactive
-                ? <Loader2 className="h-3.5 w-3.5 text-zinc-500 shrink-0 animate-spin" />
-                : <div className="h-3.5 w-3.5 rounded-full border border-zinc-700 shrink-0" />
+                  ? <Loader2 className="h-3.5 w-3.5 text-zinc-500 shrink-0 animate-spin" />
+                  : <div className="h-3.5 w-3.5 rounded-full border border-zinc-700 shrink-0" />
               }
               <span className="text-xs font-medium text-zinc-300">Step 2</span>
             </div>
@@ -188,10 +194,16 @@ export function DemoButton() {
                   <ExternalLink className="h-3 w-3 shrink-0" />
                   {relayerTxHash.slice(0, 10)}…{relayerTxHash.slice(-8)}
                 </a>
-                <p className="text-[11px] text-zinc-500 flex items-center gap-1.5">
-                  <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-                  Waiting for Somnia reactive callback…
-                </p>
+                {reactiveTimedOut ? (
+                  <p className="text-[11px] text-amber-500 flex items-center gap-1.5">
+                    ⚠ Reactive callback not detected — check explorer for on-chain activity
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-zinc-500 flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+                    Waiting for Somnia reactive callback…
+                  </p>
+                )}
               </div>
             </motion.div>
           )}

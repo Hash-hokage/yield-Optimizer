@@ -1,8 +1,12 @@
+"use client";
+
+import { useYieldOptimizer } from "@/hooks/useYieldOptimizer";
 import YieldDashboard from "@/components/YieldDashboard";
 import { DemoButton } from "@/components/DemoButton";
 import { Zap, ArrowDown } from "lucide-react";
 
 export default function Home() {
+  const optimizerData = useYieldOptimizer();
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
 
@@ -53,7 +57,7 @@ export default function Home() {
 
         {/* God Mode Button — centrepiece */}
         <div className="mt-10">
-          <DemoButton />
+          <DemoButton lastExecution={optimizerData.lastExecution} />
         </div>
 
         {/* Scroll hint */}
@@ -65,7 +69,7 @@ export default function Home() {
 
       {/* ── Dashboard ── */}
       <section className="pb-16">
-        <YieldDashboard />
+        <YieldDashboard data={optimizerData} />
       </section>
 
     </div>
