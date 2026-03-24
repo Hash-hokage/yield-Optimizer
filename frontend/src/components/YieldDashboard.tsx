@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   Sparkles,
   ArrowRight,
+  Zap,
 } from "lucide-react";
 import {
   Card,

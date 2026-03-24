@@ -232,6 +232,7 @@ export function useYieldOptimizer() {
     refetchCumulativeLoss()
     refetchMaxLossThreshold()
     refetchCurrentFarm()
+    refetchSubscriptionId()
   }
 
   return {
@@ -247,6 +248,7 @@ export function useYieldOptimizer() {
     tvl,
     currentFarm,
     currentAPYBps,
+    subscriptionId,
     optimizerUsdcBalance,
     lastExecution,
     
