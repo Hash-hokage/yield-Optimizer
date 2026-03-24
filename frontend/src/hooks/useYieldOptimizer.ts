@@ -73,6 +73,13 @@ export function useYieldOptimizer() {
     query: { refetchInterval: 8_000 },
   })
 
+  const { data: subscriptionId, refetch: refetchSubscriptionId } = useReadContract({
+    address: OPTIMIZER_ADDRESS,
+    abi: yieldOptimizerABI,
+    functionName: 'subscriptionId',
+    query: { refetchInterval: 10_000 },
+  })
+
   // Read the most recently pushed APY for the active farm from the YieldRelayer
   const { data: currentAPYBps } = useReadContract({
     address: RELAYER_ADDRESS,

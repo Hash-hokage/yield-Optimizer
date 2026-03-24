@@ -132,7 +132,7 @@ function getFarmSublabel(addr: string): string | null {
    Main Dashboard Component
    ═════════════════════════════════════════ */
 export default function YieldDashboard({ data }: { data: ReturnType<typeof useYieldOptimizer> }) {
-  const { cumulativeLoss, maxLossThreshold, isPaused, tvl, currentFarm, currentAPYBps, ...optimizer } = data;
+  const { cumulativeLoss, maxLossThreshold, isPaused, tvl, currentFarm, currentAPYBps, subscriptionId, ...optimizer } = data;
   const isLoggedIn = !!optimizer.address;
 
   const [amount, setAmount] = useState("");
@@ -165,6 +165,8 @@ export default function YieldDashboard({ data }: { data: ReturnType<typeof useYi
     if (!optimizer.userShares || (optimizer.userShares as bigint) === BigInt(0)) return;
     await optimizer.handleWithdraw(optimizer.userShares as bigint);
   };
+
+  const isReactiveSubscribed = subscriptionId && (subscriptionId as bigint) !== BigInt(0);
 
   return (
     <motion.div
@@ -259,20 +261,35 @@ export default function YieldDashboard({ data }: { data: ReturnType<typeof useYi
           <Card>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">RiskGuard</CardTitle>
-                <motion.div
-                  initial={{ scale: 0.8, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ delay: 0.3 }}
-                >
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${isPaused
-                    ? 'bg-red-500/10 text-red-400 ring-red-500/20'
-                    : 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/20'
-                    }`}>
-                    <ShieldCheck className="h-3 w-3" />
-                    {isPaused ? 'Paused' : 'Active'}
-                  </span>
-                </motion.div>
+                <CardTitle className="text-base">System Status</CardTitle>
+                <div className="flex gap-2">
+                  <motion.div
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ delay: 0.3 }}
+                  >
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${isPaused
+                      ? 'bg-red-500/10 text-red-400 ring-red-500/20'
+                      : 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/20'
+                      }`}>
+                      <ShieldCheck className="h-3 w-3" />
+                      {isPaused ? 'Paused' : 'Active'}
+                    </span>
+                  </motion.div>
+                  <motion.div
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ delay: 0.4 }}
+                  >
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ${isReactiveSubscribed
+                      ? 'bg-violet-500/10 text-violet-400 ring-violet-500/20'
+                      : 'bg-amber-500/10 text-amber-400 ring-amber-500/20'
+                      }`}>
+                      <Zap className="h-3 w-3" />
+                      {isReactiveSubscribed ? 'Reactive: Subscribed' : 'Reactive: Unsubscribed'}
+                    </span>
+                  </motion.div>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
