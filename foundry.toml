@@ -9,9 +9,9 @@ optimizer = true
 optimizer_runs = 200
 skip = ["node_modules"]
 remappings = [
+  "@somnia-chain/reactivity-contracts/=node_modules/@somnia-chain/reactivity-contracts/",
   "@somnia-chain/reactivity-contracts/contracts/SomniaEventHandler.sol=src/vendor/SomniaEventHandler.sol",
-  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
-  "@somnia-chain/reactivity-contracts/=node_modules/@somnia-chain/reactivity-contracts/"
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
 ]
 
 [profile.ci]
@@ -25,9 +25,9 @@ optimizer = true
 optimizer_runs = 200
 skip = ["node_modules"]
 remappings = [
+  "@somnia-chain/reactivity-contracts/=node_modules/@somnia-chain/reactivity-contracts/",
   "@somnia-chain/reactivity-contracts/contracts/SomniaEventHandler.sol=src/vendor/SomniaEventHandler.sol",
-  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
-  "@somnia-chain/reactivity-contracts/=node_modules/@somnia-chain/reactivity-contracts/"
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
 ]
 
 [fuzz]
